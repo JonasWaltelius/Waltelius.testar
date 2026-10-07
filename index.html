@@ -78,6 +78,9 @@
     </div>
 
     <script>
+const SUPABASE_URL = 'https://omjeuavtqdrktxohmebm.supabase.co';
+const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9tamV1YXZ0cWRya3R4b2htZWJtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTEzOTY2MjUsImV4cCI6MjEwNjk3MjYyNX0.oJK8OcJzQnxGX2zG4y6HP1tGL1lPbQnuviKLkC2S1ro';
+const supabase = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);      
         // Tillstånd (State)
         const state = {
             view: 'welcome', 
