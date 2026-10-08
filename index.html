@@ -175,8 +175,7 @@
                 };
             });
         }
-
-        async function getExams() {
+async function getExams() {
     const { data, error } = await db.from('exams').select('*');
     if (error) {
         console.error('Fel vid hämtning från Supabase:', error);
@@ -184,9 +183,8 @@
     }
     return data || [];
 }
-        }
 
-        async function saveExamToDB(exam) {
+async function saveExamToDB(exam) {
     const { data, error } = await db.from('exams').upsert({
         id: exam.id,
         title: exam.title,
@@ -199,7 +197,8 @@
     });
     if (error) console.error('Fel vid sparande till Supabase:', error);
 }
-    async function saveSubmissionToDB(submission) {
+
+async function saveSubmissionToDB(submission) {
     const { data, error } = await db.from('submissions').upsert({
         id: submission.id,
         exam_id: submission.examId,
@@ -213,6 +212,7 @@
     });
     if (error) console.error('Fel vid sparande av inlämning:', error);
 }
+        
 
         // Huvudrendering
         function render() {
