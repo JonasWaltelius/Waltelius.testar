@@ -970,8 +970,8 @@ async function saveSubmissionToDB(submission) {
         }
 
         // --- VY: MATRISÖVERSIKT (ADMIN_BOARD) ---
-        function renderAdminBoard(container) {
-            const exams = getExams();
+        async function renderAdminBoard(container) {
+            const exams = await getExams();
             const exam = exams.find(e => e.id === state.selectedExamId);
 
             if (!exam) return;
@@ -1309,7 +1309,7 @@ async function saveSubmissionToDB(submission) {
             }
         }
 
-        function saveEditedExam(e) {
+        async function saveEditedExam(e) {
             e.preventDefault();
             const exam = state.editingExam;
             exam.type = document.getElementById('editType').value;
@@ -1325,7 +1325,7 @@ async function saveSubmissionToDB(submission) {
             } else {
                 exams.push(exam);
             }
-            saveExams(exams);
+            await saveExamToDB(exam);
             state.view = 'admin';
             render();
         }
