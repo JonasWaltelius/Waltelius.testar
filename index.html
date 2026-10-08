@@ -41,16 +41,15 @@ const SUPABASE_URL = 'https://omjeuavtqdrktxohmebm.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_Ujz1Opw_GfsUnLFb18nTbg_zZHsWpnT';
 const db = window.supabase ? window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY) : null;
 
-// Standardprov om databasen nekar
 const defaultExams = [
     {
         id: 'ex-1',
         title: 'Industriella Revolutionen',
         type: 'Test',
         category: 'Historia',
-        klass: '8H',
+        klass: '7H',
         code: '1234',
-        active: true,
+        active: false,
         archived: false,
         questions: [{ id: 1, type: 'text', text: 'Vad var ångmaskinens betydelse?', criteria: '' }]
     }
@@ -58,7 +57,8 @@ const defaultExams = [
 
 const state = {
     view: 'welcome',
-    cachedExams: []
+    cachedExams: [],
+    editingExam: null
 };
 
 async function getExams() {
@@ -70,6 +70,15 @@ async function getExams() {
         return data;
     } catch (e) {
         return defaultExams;
+    }
+}
+
+async function saveExamToDB(exam) {
+    if (!db) return;
+    try {
+        await db.from('exams').upsert(exam);
+    } catch (e) {
+        console.error("Kunde inte spara:", e);
     }
 }
 
@@ -89,27 +98,258 @@ async function render() {
     const exams = await getExams();
 
     if (state.view === 'admin') {
-        app.innerHTML = `
-            <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
-                <h2 class="text-2xl font-bold text-slate-900 mb-2">Testpanelen</h2>
-                <p class="text-sm text-slate-600 mb-4">Systemet är igång igen!</p>
-                <div class="divide-y divide-slate-200">
-                    ${exams.map(e => `<div class="py-3 font-bold">${e.title} (${e.klass}) - Kod:${e.code}</div>`).join('')}
-                </div>
-            </div>
-        `;
+        renderAdmin(app, exams);
+    } else if (state.view === 'admin_edit') {
+        renderAdminEdit(app);
     } else {
-        app.innerHTML = `
-            <div class="max-w-xl mx-auto mt-6 bg-white rounded-2xl border border-slate-200 shadow-xl p-6 sm:p-8 text-center">
-                <span class="inline-block px-3 py-1 bg-red-100 text-red-700 text-xs font-bold rounded-full uppercase tracking-wider mb-2">Elevportal</span>
-                <h2 class="text-2xl font-extrabold text-slate-900 mb-4">Välkommen till Waltelius<span class="text-red-600">.testar</span></h2>
-                <p class="text-sm text-slate-600 mb-6">Sidan fungerar nu helt utan krascher.</p>
-                <button onclick="state.view='admin'; render();" class="w-full py-3 bg-red-600 text-white font-bold rounded-xl shadow-md hover:bg-red-700">
-                    Gå till Testpanelen
+        renderWelcome(app, exams);
+    }
+}
+
+function renderWelcome(container, exams) {
+    container.innerHTML = `
+        <div class="max-w-xl mx-auto mt-6 bg-white rounded-2xl border border-slate-200 shadow-xl p-6 sm:p-8 text-center">
+            <span class="inline-block px-3 py-1 bg-red-100 text-red-700 text-xs font-bold rounded-full uppercase tracking-wider mb-2">Elevportal</span>
+            <h2 class="text-2xl font-extrabold text-slate-900 mb-4">Välkommen till Waltelius<span class="text-red-600">.testar</span></h2>
+            <button onclick="state.view='admin'; render();" class="w-full py-3 bg-red-600 text-white font-bold rounded-xl shadow-md hover:bg-red-700">
+                Gå till Testpanelen
+            </button>
+        </div>
+    `;
+}
+
+function renderAdmin(container, exams) {
+    container.innerHTML = `
+        <div class="space-y-6">
+            <div class="flex items-center justify-between bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+                <h2 class="text-2xl font-bold text-slate-900">Testpanelen</h2>
+                <button onclick="openCreateExamModal()" class="px-5 py-2.5 bg-red-600 text-white font-bold rounded-xl shadow-md text-xs">
+                    + Skapa Ny Uppgift
                 </button>
             </div>
-        `;
+            <div class="bg-white rounded-2xl border border-slate-200 p-4 divide-y divide-slate-200">
+                ${exams.map(e => `
+                    <div class="py-3 flex items-center justify-between">
+                        <div>
+                            <div class="font-bold text-slate-900">${e.title}</div>
+                            <div class="text-xs text-slate-500">${e.type} • Klass ${e.klass} • Kod: ${e.code} •${e.active ? 'Aktiv' : 'Inaktiv'}</div>
+                        </div>
+                        <button onclick="openEditExam('${e.id}')" class="px-3 py-1.5 bg-slate-100 text-slate-700 font-semibold rounded-lg text-xs">
+                            Redigera
+                        </button>
+                    </div>
+                `).join('')}
+            </div>
+        </div>
+    `;
+}
+
+function openCreateExamModal() {
+    state.editingExam = {
+        id: 'ex-' + Date.now(),
+        title: '',
+        type: 'Test',
+        category: 'Historia',
+        klass: '7H',
+        code: Math.floor(1000 + Math.random() * 9000).toString(),
+        active: false,
+        archived: false,
+        questions: []
+    };
+    state.view = 'admin_edit';
+    render();
+}
+
+function openEditExam(id) {
+    const exam = state.cachedExams.find(e => e.id === id);
+    if (exam) {
+        state.editingExam = JSON.parse(JSON.stringify(exam));
+        state.view = 'admin_edit';
+        render();
     }
+}
+
+function syncFormToState() {
+    if (!state.editingExam) return;
+    const titleEl = document.getElementById('editTitle');
+    if (titleEl) state.editingExam.title = titleEl.value;
+
+    const klassSel = document.getElementById('editKlassSelect');
+    if (klassSel) {
+        if (klassSel.value === 'custom') {
+            state.editingExam.klass = document.getElementById('editKlassCustom').value.trim();
+        } else {
+            state.editingExam.klass = klassSel.value;
+        }
+    }
+
+    const codeEl = document.getElementById('editCode');
+    if (codeEl) state.editingExam.code = codeEl.value.trim();
+
+    const catEl = document.getElementById('editCategory');
+    if (catEl) state.editingExam.category = catEl.value;
+
+    const typeEl = document.getElementById('editType');
+    if (typeEl) state.editingExam.type = typeEl.value;
+}
+
+function renderAdminEdit(container) {
+    const exam = state.editingExam || {};
+    const isCustomClass = !['7H', '8H', '9H'].includes(exam.klass);
+
+    container.innerHTML = `
+        <div class="max-w-3xl mx-auto bg-white rounded-2xl border border-slate-200 shadow-xl p-6 sm:p-8 space-y-6">
+            <div class="flex items-center justify-between border-b border-slate-200 pb-4">
+                <h2 class="text-2xl font-bold text-slate-900">${exam.title ? 'Redigera uppgift' : 'Skapa Ny Uppgift'}</h2>
+                <button onclick="state.view='admin'; render();" class="text-sm font-semibold text-slate-500">Avbryt</button>
+            </div>
+
+            <form onsubmit="saveEditedExam(event)" class="space-y-5">
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Typ av uppgift</label>
+                        <select id="editType" class="w-full px-4 py-2.5 rounded-xl border border-slate-300 text-sm bg-white">
+                            <option value="Test" ${exam.type === 'Test' ? 'selected' : ''}>Test</option>
+                            <option value="Entryticket" ${exam.type === 'Entryticket' ? 'selected' : ''}>Entryticket</option>
+                            <option value="Exitticket" ${exam.type === 'Exitticket' ? 'selected' : ''}>Exitticket</option>
+                            <option value="Träning" ${exam.type === 'Träning' ? 'selected' : ''}>Träning/Repetition</option>
+                        </select>
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Ämne</label>
+                        <select id="editCategory" class="w-full px-4 py-2.5 rounded-xl border border-slate-300 text-sm bg-white">
+                            <option value="Historia" ${exam.category === 'Historia' ? 'selected' : ''}>Historia</option>
+                            <option value="Geografi" ${exam.category === 'Geografi' ? 'selected' : ''}>Geografi</option>
+                            <option value="Religion" ${exam.category === 'Religion' ? 'selected' : ''}>Religion</option>
+                            <option value="Samhällskunskap" ${exam.category === 'Samhällskunskap' ? 'selected' : ''}>Samhällskunskap</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 sm:grid-cols-12 gap-4 items-end">
+                    <div class="sm:col-span-5">
+                        <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Titel på uppgift</label>
+                        <input type="text" id="editTitle" required value="${exam.title || ''}" placeholder="t.ex. Industriella Revolutionen"
+                            class="w-full px-4 py-2.5 rounded-xl border border-slate-300 text-sm">
+                    </div>
+
+                    <div class="sm:col-span-3">
+                        <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Klass</label>
+                        <select id="editKlassSelect" onchange="toggleCustomKlassInput(this.value)" class="w-full px-3 py-2.5 rounded-xl border border-slate-300 text-sm bg-white">
+                            <option value="7H" ${exam.klass === '7H' ? 'selected' : ''}>7H</option>
+                            <option value="8H" ${exam.klass === '8H' ? 'selected' : ''}>8H</option>
+                            <option value="9H" ${exam.klass === '9H' ? 'selected' : ''}>9H</option>
+                            <option value="custom" ${isCustomClass ? 'selected' : ''}>Egen klass...</option>
+                        </select>
+                        <input type="text" id="editKlassCustom" value="${isCustomClass ? exam.klass : ''}" placeholder="Skriv klass" 
+                            class="${isCustomClass ? '' : 'hidden'} mt-2 w-full px-3 py-2 rounded-lg border border-slate-300 text-sm">
+                    </div>
+
+                    <div class="sm:col-span-4">
+                        <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Provkod</label>
+                        <div class="flex items-center space-x-1">
+                            <input type="text" id="editCode" maxlength="4" required value="${exam.code || ''}"
+                                class="w-full px-3 py-2.5 rounded-xl border border-slate-300 text-sm font-mono text-center">
+                            <button type="button" onclick="refreshCode()" title="Slumpa ny kod" class="p-2.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl border border-slate-300 text-xs">
+                                <i class="fa-solid fa-arrows-rotate"></i>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="border-t border-slate-200 pt-5 space-y-4">
+                    <h3 class="font-bold text-slate-900">Frågor</h3>
+                    <div class="space-y-4">
+                        ${(exam.questions || []).map((q, idx) => renderEditQuestionCard(q, idx, (exam.questions || []).length)).join('')}
+                    </div>
+                </div>
+
+                <div class="flex items-center justify-between pt-4 border-t border-slate-200">
+                    <div class="space-x-2">
+                        <button type="button" onclick="addTextQuestion()" class="px-3 py-2 bg-red-50 text-red-700 font-bold text-xs rounded-xl">+ Öppen fråga</button>
+                        <button type="button" onclick="addMCQuestion()" class="px-3 py-2 bg-red-50 text-red-700 font-bold text-xs rounded-xl">+ Flervalsfråga</button>
+                    </div>
+                    <button type="submit" class="px-6 py-2.5 bg-emerald-600 text-white font-bold rounded-xl text-xs">
+                        Spara Uppgift
+                    </button>
+                </div>
+            </form>
+        </div>
+    `;
+}
+
+function refreshCode() {
+    const newCode = Math.floor(1000 + Math.random() * 9000).toString();
+    document.getElementById('editCode').value = newCode;
+    if (state.editingExam) state.editingExam.code = newCode;
+}
+
+function toggleCustomKlassInput(val) {
+    const input = document.getElementById('editKlassCustom');
+    if (val === 'custom') {
+        input.classList.remove('hidden');
+        input.required = true;
+    } else {
+        input.classList.add('hidden');
+        input.required = false;
+    }
+}
+
+function renderEditQuestionCard(q, idx, totalQuestions) {
+    return `
+        <div class="p-4 rounded-xl border border-slate-200 bg-slate-50 space-y-3">
+            <div class="flex items-center justify-between">
+                <span class="font-bold text-xs text-red-600">Fråga ${idx + 1} (${q.type === 'mc' ? 'Flerval' : 'Öppen text'})</span>
+                <div class="flex items-center space-x-1">
+                    <button type="button" onclick="moveQuestion(${idx}, -1)" ${idx === 0 ? 'disabled' : ''} class="p-1 px-2 bg-slate-200 text-xs rounded"><i class="fa-solid fa-arrow-up"></i></button>
+                    <button type="button" onclick="moveQuestion(${idx}, 1)" ${idx === totalQuestions - 1 ? 'disabled' : ''} class="p-1 px-2 bg-slate-200 text-xs rounded"><i class="fa-solid fa-arrow-down"></i></button>
+                    <button type="button" onclick="removeQuestion(${idx})" class="text-red-500 text-xs ml-2"><i class="fa-solid fa-trash"></i></button>
+                </div>
+            </div>
+            <input type="text" value="${q.text || ''}" onchange="state.editingExam.questions[${idx}].text = this.value" placeholder="Skriv frågan här..." class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm">
+        </div>
+    `;
+}
+
+function moveQuestion(idx, direction) {
+    syncFormToState();
+    const questions = state.editingExam.questions;
+    const newIdx = idx + direction;
+    if (newIdx < 0 || newIdx >= questions.length) return;
+    const temp = questions[idx];
+    questions[idx] = questions[newIdx];
+    questions[newIdx] = temp;
+    render();
+}
+
+function addTextQuestion() {
+    syncFormToState();
+    if (!state.editingExam.questions) state.editingExam.questions = [];
+    state.editingExam.questions.push({ id: Date.now(), type: 'text', text: '', criteria: '' });
+    render();
+}
+
+function addMCQuestion() {
+    syncFormToState();
+    if (!state.editingExam.questions) state.editingExam.questions = [];
+    state.editingExam.questions.push({ id: Date.now(), type: 'mc', text: '', options: ['', '', '', ''], correctOptions: [0], criteria: '' });
+    render();
+}
+
+function removeQuestion(idx) {
+    syncFormToState();
+    state.editingExam.questions.splice(idx, 1);
+    render();
+}
+
+async function saveEditedExam(e) {
+    e.preventDefault();
+    syncFormToState();
+    const exam = state.editingExam;
+    await saveExamToDB(exam);
+    state.view = 'admin';
+    render();
 }
 
 document.addEventListener('DOMContentLoaded', render);
