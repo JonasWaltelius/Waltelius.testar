@@ -162,11 +162,10 @@ async function render() {
         default: renderWelcome(app, exams); break;
     }
 }
-        // --- VY: VÄLKOMSTSIDA ---
-        function renderWelcome(container) {
-            const exams = getExams();
-            const activeClasses = [...new Set(exams.filter(e => e.active).map(e => e.klass))];
-
+// --- VY: VÄLKOMSTSIDA ---
+function renderWelcome(container, exams) {
+    const activeClasses = [...new Set(exams.filter(e => e.active).map(e => e.klass))];
+    
             container.innerHTML = `
                 <div class="max-w-xl mx-auto mt-6 bg-white rounded-2xl border border-slate-200 shadow-xl p-6 sm:p-8">
                     <div class="text-center mb-8">
