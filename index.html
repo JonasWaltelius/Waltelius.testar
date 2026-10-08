@@ -1325,7 +1325,7 @@ async function saveSubmissionToDB(submission) {
             exam.klass = document.getElementById('editKlass').value.trim();
             exam.code = document.getElementById('editCode').value.trim();
 
-            const exams = getExams();
+            const exams = await getExams();
             const idx = exams.findIndex(ex => ex.id === exam.id);
             if (idx !== -1) {
                 exams[idx] = exam;
