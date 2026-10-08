@@ -78,7 +78,9 @@
         </div>
     </div>
 
-<script>
+<script> window.onerror = function(msg, url, line) {
+    alert("Fel uppstod på rad " + line + ":\n" + msg);
+};
     const SUPABASE_URL = 'https://omjeuavtqdrktxohmebm.supabase.co';
     const SUPABASE_KEY = 'sb_publishable_Uj2lOpw_GfsUnLfb10nTbg_zZHsWpnT';
     const db = window.supabase ? window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY) : null;         
