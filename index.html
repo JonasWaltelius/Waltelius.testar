@@ -91,6 +91,9 @@
     </div>
 
 <script>
+ window.onerror = function(msg, url, line) {
+    alert("Koden stoppades på rad " + line + ":\n" + msg);
+};   
 window.onerror = null;
 
 const SUPABASE_URL = 'https://omjeuavtqdrktxohmebm.supabase.co';
