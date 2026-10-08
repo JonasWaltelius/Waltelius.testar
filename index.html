@@ -81,7 +81,7 @@
 <script>
     const SUPABASE_URL = 'https://omjeuavtqdrktxohmebm.supabase.co';
     const SUPABASE_KEY = 'sb_publishable_Uj2lOpw_GfsUnLfb10nTbg_zZHsWpnT';
-    const db = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);          
+    const db = window.supabase ? window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY) : null;         
         // Tillstånd (State)
         const state = {
             view: 'welcome', 
