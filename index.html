@@ -216,7 +216,9 @@ async function saveSubmissionToDB(submission) {
         
 
         // Huvudrendering
-async function render() {
+// Hjälpfunktion för knappklick
+function triggerRender() { render(); }
+    async function render() {
     const app = document.getElementById('app');
     const navRight = document.getElementById('navRight');
     if (!app) return;
@@ -225,12 +227,12 @@ async function render() {
     if (navRight) {
         if (state.view.startsWith('admin')) {
             navRight.innerHTML = `
-                <button onclick="state.view='welcome'; render();" class="text-sm font-medium text-slate-600 hover:text-slate-900 flex items-center gap-1">
+                <button onclick="state.view='welcome'; triggerRender();" class="text-sm font-medium text-slate-600 hover:text-slate-900 flex items-center gap-1">
                     <i class="fa-solid fa-arrow-right-from-bracket mr-1"></i> Lämna Testpanelen
                 </button>`;
         } else {
             navRight.innerHTML = `
-                <button onclick="state.view='admin'; render();" class="text-sm font-medium text-slate-600 hover:text-slate-900 flex items-center gap-1">
+                <button onclick="state.view='admin'; triggerRender();" class="text-sm font-medium text-slate-600 hover:text-slate-900 flex items-center gap-1">
                     <i class="fa-solid fa-sliders mr-1"></i> Testpanelen
                 </button>`;
         }
