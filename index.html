@@ -216,34 +216,40 @@ async function saveSubmissionToDB(submission) {
 
         // Huvudrendering
         async function render() {
-            const app = document.getElementById('app');
-            const navRight = document.getElementById('navRight');
+    const app = document.getElementById('app');
+    const navRight = document.getElementById('navRight');
+    if (!app) return;
 
-            if (state.view.startsWith('admin')) {
-                navRight.innerHTML = `
-                    <button onclick="state.view='welcome'; render();" class="text-sm font-medium text-slate-600 hover:text-slate-900 px-3 py-2 rounded-lg border border-slate-200 bg-white shadow-sm">
-                        <i class="fa-solid fa-arrow-right-from-bracket mr-1"></i> Lämna Testpanelen
-                    </button>
-                `;
-            } else {
-                navRight.innerHTML = `
-                    <button onclick="state.view='admin'; render();" class="text-sm font-medium text-slate-700 hover:text-indigo-600 px-3 py-2 rounded-lg bg-slate-100 hover:bg-indigo-50 transition">
-                        <i class="fa-solid fa-sliders mr-1"></i> Testpanelen
-                    </button>
-                `;
-            }
+    // 1. Hämta alla prov från Supabase först
+    const exams = await getExams();
 
-            switch (state.view) {
-                case 'welcome': await renderWelcome(app); break;
-                case 'student_code': renderStudentCode(app); break;
-                case 'student_exam': renderStudentExam(app); break;
-                case 'student_result': renderStudentResult(app); break;
-                case 'admin': await renderAdmin(app); break;
-                case 'admin_screen': renderAdminScreen(app); break;
-                case 'admin_board': await renderAdminBoard(app); break;
-                case 'admin_edit': renderAdminEdit(app); break;
-            }
+    // 2. Rendera navigeringen högst upp
+    if (navRight) {
+        if (state.view.startsWith('admin')) {
+            navRight.innerHTML = `
+                <button onclick="state.view='welcome'; render();" class="text-sm font-medium text-slate-600 hover:text-slate-900 flex items-center gap-1">
+                    <i class="fa-solid fa-arrow-right-from-bracket mr-1"></i> Lämna Testpanelen
+                </button>`;
+        } else {
+            navRight.innerHTML = `
+                <button onclick="state.view='admin'; render();" class="text-sm font-medium text-slate-600 hover:text-slate-900 flex items-center gap-1">
+                    <i class="fa-solid fa-sliders mr-1"></i> Testpanelen
+                </button>`;
         }
+    }
+
+    // 3. Rendera rätt vy och skicka med `exams`
+    switch (state.view) {
+        case 'welcome': renderWelcome(app, exams); break;
+        case 'student_code': renderStudentCode(app); break;
+        case 'student_exam': renderStudentExam(app); break;
+        case 'student_result': renderStudentResult(app); break;
+        case 'admin': renderAdmin(app, exams); break;
+        case 'admin_screen': renderAdminScreen(app); break;
+        case 'admin_board': renderAdminBoard(app); break;
+        case 'admin_edit': renderAdminEdit(app); break;
+    }
+}
 
         function goHome() {
             if (state.view === 'student_exam') {
