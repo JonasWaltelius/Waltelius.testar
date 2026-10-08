@@ -17,9 +17,8 @@
         .no-select { user-select: none; -webkit-user-select: none; }
         textarea, input { -webkit-user-select: text; }
         
-        /* Kompakta & Stilrena färgnyanser för pluppar (NCS 6020-G30Y för mörkgrön) */
         .dot-darkgreen {
-            background-color: #164e3f; /* NCS 6020-G30Y */
+            background-color: #164e3f;
             border: 1.5px solid #0d3329;
             color: #ffffff;
         }
@@ -46,7 +45,6 @@
     <header class="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-sm">
         <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
             <div class="flex items-center space-x-3 cursor-pointer" onclick="goHome()">
-                <!-- Crimson Tech Logo Icon -->
                 <div class="w-10 h-10 bg-gradient-to-br from-red-600 to-red-800 rounded-xl flex items-center justify-center text-white shadow-md">
                     <svg class="w-6 h-6" viewBox="0 0 100 100">
                         <path d="M 15 25 L 32.5 75 L 50 38 L 67.5 75 L 85 25" fill="none" stroke="#ffffff" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
@@ -99,10 +97,8 @@ const SUPABASE_URL = 'https://omjeuavtqdrktxohmebm.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_Ujz1Opw_GfsUnLFb18nTbg_zZHsWpnT';
 const db = window.supabase ? window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY) : null;
 
-// Förbjudna/obscena ord för namnvalidering
 const BANNED_WORDS = ['fan', 'jävel', 'helvete', 'skit', 'kukk', 'fitta', 'hor', 'bajs', 'snopp', 'fart', 'idiot', 'knulla', 'hitler', 'stalin', 'bitch'];
 
-// Tillstånd (State)
 const state = {
     view: 'welcome',
     currentUser: null,
@@ -126,7 +122,6 @@ function goHome() {
     render();
 }
 
-// Slumpa ordning på array (Fisher-Yates)
 function shuffleArray(array) {
     const arr = [...array];
     for (let i = arr.length - 1; i > 0; i--) {
@@ -136,7 +131,6 @@ function shuffleArray(array) {
     return arr;
 }
 
-// Namnvalidering
 function validateStudentName(name) {
     const trimmed = name.trim();
     const parts = trimmed.split(/\s+/);
@@ -152,13 +146,11 @@ function validateStudentName(name) {
     return { valid: true };
 }
 
-// Hämta prov från Supabase (Sorterade kronologiskt, senast skapad överst)
 async function getExams() {
     if (!db) return [];
     try {
         const { data, error } = await db.from('exams').select('*');
         if (error || !data) throw error;
-        // Sortera kronologiskt på ID / timestamp fallande
         data.sort((a, b) => {
             const timeA = parseInt((a.id || '').replace('ex-', '')) || 0;
             const timeB = parseInt((b.id || '').replace('ex-', '')) || 0;
@@ -172,7 +164,6 @@ async function getExams() {
     }
 }
 
-// Spara prov till Supabase
 async function saveExamToDB(exam) {
     if (!db) return;
     try {
@@ -186,7 +177,6 @@ async function saveExamToDB(exam) {
     }
 }
 
-// Huvudrendering
 async function render() {
     const app = document.getElementById('app');
     const navRight = document.getElementById('navRight');
@@ -221,7 +211,6 @@ async function render() {
     }
 }
 
-// --- VY: VÄLKOMSTSIDA ---
 function renderWelcome(container, exams) {
     const savedName = localStorage.getItem('waltelius_student_name') || '';
     const activeExams = exams.filter(e => e.active && !e.archived);
@@ -313,7 +302,6 @@ async function handleWelcomeSubmit(e) {
         return;
     }
 
-    // Skapa slumpad ordning för flervalsfrågorna för denna elev
     const preparedQuestions = (exam.questions || []).map(q => {
         if (q.type === 'mc' && q.options) {
             const indexedOptions = q.options.map((opt, i) => ({ opt, isCorrect: (q.correctOptions || []).includes(i) }));
@@ -334,7 +322,6 @@ async function handleWelcomeSubmit(e) {
     render();
 }
 
-// --- VY: INMATNING AV PROVKOD ---
 function renderStudentCode(container) {
     container.innerHTML = `
         <div class="max-w-md mx-auto mt-12 bg-white rounded-2xl border border-slate-200 shadow-xl p-6 sm:p-8 text-center">
@@ -399,7 +386,6 @@ async function handleCodeSubmit(e) {
             state.warningCount = sub.warnings || 0;
         }
 
-        // Helskärm
         try {
             if (document.documentElement.requestFullscreen) {
                 document.documentElement.requestFullscreen().catch(() => {});
@@ -415,7 +401,6 @@ async function handleCodeSubmit(e) {
     }
 }
 
-// Tidtagarur
 function startTimer() {
     stopTimer();
     state.examTimer = setInterval(() => {
@@ -436,7 +421,6 @@ function stopTimer() {
     }
 }
 
-// --- FLIKBYTESDETEKTERING ---
 function setupCheatDetection() {
     window.onvisibilitychange = () => {
         if (document.hidden && state.view === 'student_exam') {
@@ -491,7 +475,6 @@ function closeWarningModal() {
     }
 }
 
-// --- VY: PROVGENOMFÖRANDE (STUDENT_EXAM) ---
 function renderStudentExam(container) {
     const isEntryOrExit = state.activeExam.type === 'Entryticket' || state.activeExam.type === 'Exitticket';
     const displayTitle = isEntryOrExit ? 'Minns du?' : state.activeExam.title;
@@ -506,7 +489,6 @@ function renderStudentExam(container) {
                     <h2 class="text-2xl font-bold">${displayTitle}</h2>
                     <p class="text-xs opacity-90 mt-1">Elev: ${state.currentUser.name} (${state.currentUser.class})</p>
                 </div>
-                <!-- Diskret Klocka -->
                 <div class="bg-white/10 px-4 py-2 rounded-xl backdrop-blur-sm text-right flex items-center gap-2 border border-white/20">
                     <i class="fa-regular fa-clock text-red-200"></i>
                     <span id="digitalClock" class="font-mono font-bold text-lg text-white">${initialMins}:${initialSecs}</span>
@@ -670,7 +652,6 @@ async function handleExamSubmit(e) {
     render();
 }
 
-// --- VY: RESULTAT ELEV ---
 function renderStudentResult(container) {
     const res = state.submittedResult;
     const isTraning = state.activeExam.type === 'Träning';
@@ -716,7 +697,6 @@ function renderDotBadge(statusDot) {
     return '';
 }
 
-// --- VY: ADMIN HUVUDSIDA ---
 function renderAdmin(container, exams) {
     const isArchive = state.showArchive;
     const filteredExams = exams.filter(e => isArchive ? e.archived : !e.archived);
@@ -871,7 +851,7 @@ async function copyExam(id) {
         newExam.title = newExam.title + ' (Kopia)';
         newExam.code = Math.floor(1000 + Math.random() * 9000).toString();
         newExam.archived = false;
-        newExam.active = false; // Förinställd som inaktiv
+        newExam.active = false;
         newExam.submissions = [];
         await saveExamToDB(newExam);
         render();
@@ -900,7 +880,6 @@ function goToBoard(id) {
     render();
 }
 
-// --- VY: PROJEKTORVY (SKÄRM) ---
 function renderAdminScreen(container, exams) {
     const exam = exams.find(e => e.id === state.selectedExamId);
     if (!exam) return;
@@ -923,7 +902,6 @@ function renderAdminScreen(container, exams) {
             </div>
 
             <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <!-- KOLUMN 1: PÅGÅR -->
                 <div class="bg-white rounded-2xl border border-slate-200 p-6 shadow-md">
                     <div class="flex items-center justify-between pb-4 mb-4 border-b border-slate-200">
                         <h3 class="text-lg font-bold text-slate-800 flex items-center">
@@ -938,7 +916,6 @@ function renderAdminScreen(container, exams) {
                     </div>
                 </div>
 
-                <!-- KOLUMN 2: INLÄMNADE -->
                 <div class="bg-white rounded-2xl border border-slate-200 p-6 shadow-md">
                     <div class="flex items-center justify-between pb-4 mb-4 border-b border-slate-200">
                         <h3 class="text-lg font-bold text-slate-800 flex items-center">
@@ -1019,7 +996,6 @@ async function forceSubmitStudent(examId, studentName) {
     }
 }
 
-// --- VY: MATRISÖVERSIKT (ADMIN_BOARD) ---
 function renderAdminBoard(container, exams) {
     const exam = exams.find(e => e.id === state.selectedExamId);
     if (!exam) return;
@@ -1154,7 +1130,6 @@ function closeStudentDetailModal() {
     document.getElementById('studentDetailModal').classList.add('hidden');
 }
 
-// --- VY: SKAPA / REDIGERA UPPGIFT (ADMIN_EDIT) ---
 function openCreateExamModal() {
     state.editingExam = {
         id: 'ex-' + Date.now(),
@@ -1163,7 +1138,7 @@ function openCreateExamModal() {
         category: 'Historia',
         klass: '7H',
         code: Math.floor(1000 + Math.random() * 9000).toString(),
-        active: false, // Alla nya är Inaktiverade i ursprungsläget
+        active: false,
         archived: false,
         questions: []
     };
@@ -1184,7 +1159,6 @@ function renderAdminEdit(container) {
     const exam = state.editingExam || {};
     const examType = exam.type || 'Test';
     const isEntryOrExit = examType === 'Entryticket' || examType === 'Exitticket';        
-
     const isCustomClass = !['7H', '8H', '9H'].includes(exam.klass);
 
     container.innerHTML = `
@@ -1248,7 +1222,6 @@ function renderAdminEdit(container) {
                     </div>
                 </div>
 
-                <!-- FRÅGOR SEKTION -->
                 <div class="border-t border-slate-200 pt-5 space-y-4" id="questionsContainer">
                     <h3 class="font-bold text-slate-900">${isEntryOrExit ? 'Begrepp som ska förklaras' : 'Frågor'}</h3>
 
@@ -1257,7 +1230,6 @@ function renderAdminEdit(container) {
                     </div>
                 </div>
 
-                <!-- FLYTTANDE KNAPPAR LÄNGST NED -->
                 <div class="fixed bottom-4 left-1/2 -translate-x-1/2 max-w-2xl w-[90%] bg-white/90 backdrop-blur-md p-3 rounded-2xl border border-slate-300 shadow-2xl flex items-center justify-between gap-2 z-40">
                     <div class="flex space-x-1">
                         ${isEntryOrExit ? `
@@ -1443,7 +1415,6 @@ function addTextQuestion() {
 function addMCQuestion() {
     syncFormToState();
     if (!state.editingExam.questions) state.editingExam.questions = [];
-    // Tomma fält för alternativen
     state.editingExam.questions.push({
         id: Date.now(),
         type: 'mc',
@@ -1502,7 +1473,6 @@ async function saveEditedExam(e) {
     render();
 }
 
-// Starta applikationen när DOM laddats
 document.addEventListener('DOMContentLoaded', () => {
     render();
 });
