@@ -214,11 +214,8 @@ async function saveSubmissionToDB(submission) {
     if (error) console.error('Fel vid sparande av inlämning:', error);
 }
         
-
-        // Huvudrendering
-// Hjälpfunktion för knappklick
-function triggerRender() { render(); }
-    async function render() {
+// Huvudrendering
+async function render() {
     const app = document.getElementById('app');
     const navRight = document.getElementById('navRight');
     if (!app) return;
@@ -227,47 +224,38 @@ function triggerRender() { render(); }
     if (navRight) {
         if (state.view.startsWith('admin')) {
             navRight.innerHTML = `
-                <button onclick="state.view='welcome'; triggerRender();" class="text-sm font-medium text-slate-600 hover:text-slate-900 flex items-center gap-1">
+                <button onclick="state.view='welcome'; render();" class="text-sm font-medium text-slate-600 hover:text-slate-900 flex items-center gap-1">
                     <i class="fa-solid fa-arrow-right-from-bracket mr-1"></i> Lämna Testpanelen
                 </button>`;
         } else {
             navRight.innerHTML = `
-                <button onclick="state.view='admin'; triggerRender();" class="text-sm font-medium text-slate-600 hover:text-slate-900 flex items-center gap-1">
+                <button onclick="state.view='admin'; render();" class="text-sm font-medium text-slate-600 hover:text-slate-900 flex items-center gap-1">
                     <i class="fa-solid fa-sliders mr-1"></i> Testpanelen
                 </button>`;
         }
     }
 
-    // 2. Använd defaultExams som reserv om databasen tar tid
-    let exams = typeof defaultExams !== 'undefined' ? defaultExams : [];
-    
+    // 2. Hämta prov från Supabase
+    let exams = [];
     try {
-        const dbExams = await getExams();
-        if (dbExams && dbExams.length > 0) {
-            exams = dbExams;
-        }
-    } catch (err) {
-        console.error("Kunde inte hämta från Supabase, använder standarddata:", err);
+        exams = await getExams();
+    } catch (e) {
+        console.error("Kunde inte hämta prov:", e);
     }
 
     // 3. Rita ut rätt vy
-    if (state.view === 'welcome') renderWelcome(app, exams);
-    else if (state.view === 'student_code') renderStudentCode(app);
-    else if (state.view === 'student_exam') renderStudentExam(app);
-    else if (state.view === 'student_result') renderStudentResult(app);
-    else if (state.view === 'admin') renderAdmin(app, exams);
-    else if (state.view === 'admin_screen') renderAdminScreen(app);
-    else if (state.view === 'admin_board') renderAdminBoard(app);
-    else if (state.view === 'admin_edit') renderAdminEdit(app);
-}    
-        function goHome() {
-            if (state.view === 'student_exam') {
-                if (!confirm("Vill du verkligen lämna? Dina svar sparas inte.")) return;
-            }
-            state.view = 'welcome';
-            render();
-        }
-
+    switch (state.view) {
+        case 'welcome': renderWelcome(app, exams); break;
+        case 'student_code': renderStudentCode(app); break;
+        case 'student_exam': renderStudentExam(app); break;
+        case 'student_result': renderStudentResult(app); break;
+        case 'admin': renderAdmin(app, exams); break;
+        case 'admin_screen': renderAdminScreen(app); break;
+        case 'admin_board': renderAdminBoard(app); break;
+        case 'admin_edit': renderAdminEdit(app); break;
+        default: renderWelcome(app, exams); break;
+    }
+}
         // --- VY: VÄLKOMSTSIDA ---
         function renderWelcome(container) {
             const exams = getExams();
