@@ -176,18 +176,44 @@
             });
         }
 
-        function getExams() {
-            const stored = localStorage.getItem('wt_exams_v2');
-            if (!stored) {
-                localStorage.setItem('wt_exams_v2', JSON.stringify(defaultExams));
-                return defaultExams;
-            }
+        async function getExams() {
+    const { data, error } = await db.from('exams').select('*');
+    if (error) {
+        console.error('Fel vid hämtning från Supabase:', error);
+        return [];
+    }
+    return data || [];
+}
             return JSON.parse(stored);
         }
 
-        function saveExams(exams) {
-            localStorage.setItem('wt_exams_v2', JSON.stringify(exams));
-        }
+        async function saveExamToDB(exam) {
+    const { data, error } = await db.from('exams').upsert({
+        id: exam.id,
+        title: exam.title,
+        type: exam.type,
+        category: exam.category,
+        klass: exam.klass,
+        code: exam.code,
+        active: exam.active,
+        questions: exam.questions
+    });
+    if (error) console.error('Fel vid sparande till Supabase:', error);
+}
+    async function saveSubmissionToDB(submission) {
+    const { data, error } = await db.from('submissions').upsert({
+        id: submission.id,
+        exam_id: submission.examId,
+        student_name: submission.studentName,
+        student_class: submission.studentClass,
+        status: submission.status,
+        warnings: submission.warnings,
+        answers: submission.answers,
+        feedback: submission.feedback,
+        submitted_at: submission.submittedAt
+    });
+    if (error) console.error('Fel vid sparande av inlämning:', error);
+}
 
         // Huvudrendering
         function render() {
