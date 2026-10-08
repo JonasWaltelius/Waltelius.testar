@@ -215,7 +215,7 @@ async function saveSubmissionToDB(submission) {
         
 
         // Huvudrendering
-        function render() {
+        async function render() {
             const app = document.getElementById('app');
             const navRight = document.getElementById('navRight');
 
@@ -234,13 +234,13 @@ async function saveSubmissionToDB(submission) {
             }
 
             switch (state.view) {
-                case 'welcome': renderWelcome(app); break;
+                case 'welcome': await renderWelcome(app); break;
                 case 'student_code': renderStudentCode(app); break;
                 case 'student_exam': renderStudentExam(app); break;
                 case 'student_result': renderStudentResult(app); break;
-                case 'admin': renderAdmin(app); break;
+                case 'admin': await renderAdmin(app); break;
                 case 'admin_screen': renderAdminScreen(app); break;
-                case 'admin_board': renderAdminBoard(app); break;
+                case 'admin_board': await renderAdminBoard(app); break;
                 case 'admin_edit': renderAdminEdit(app); break;
             }
         }
