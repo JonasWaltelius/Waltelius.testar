@@ -78,149 +78,57 @@
         </div>
     </div>
 
-<script> window.onerror = function(msg, url, line) {
-    alert("Fel uppstod på rad " + line + ":\n" + msg);
+<script>
+window.onerror = null; // Rensa gamla felhanteraren
+
+const SUPABASE_URL = 'https://omjeuavtqdrktxohmebm.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_Ujz1Opw_GfsUnLFb18nTbg_zZHsWpnT';
+const db = window.supabase ? window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY) : null;
+
+// Tillstånd (State)
+const state = {
+    view: 'welcome',
+    currentUser: null,
+    selectedExamId: null,
+    activeExam: null,
+    warningCount: 0,
+    hasCheatedModalShown: false,
+    geminiApiKey: '',
+    answers: {},
+    submittedResult: null,
+    editingExam: null
 };
-    const SUPABASE_URL = 'https://omjeuavtqdrktxohmebm.supabase.co';
-    const SUPABASE_KEY = 'sb_publishable_Uj2lOpw_GfsUnLfb10nTbg_zZHsWpnT';
-    const db = window.supabase ? window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY) : null;         
-        // Tillstånd (State)
-        const state = {
-            view: 'welcome', 
-            currentUser: null, 
-            selectedExamId: null,
-            activeExam: null,
-            warningCount: 0,
-            hasCheatedModalShown: false,
-            geminiApiKey: '', 
-            answers: {}, 
-            submittedResult: null,
-            editingExam: null 
-        };
 
-        // Standarddata
-        const defaultExams = [
-            {
-                id: 'ex-101',
-                title: 'Industriella revolutionen',
-                type: 'Test',
-                category: 'Historia',
-                klass: '8B',
-                date: '2026-10-15',
-                code: '5678',
-                active: true,
-                questions: [
-                    {
-                        id: 1,
-                        type: 'text',
-                        text: 'Förklara tre viktiga orsakar till att den industriella revolutionen startade i Storbritannien.',
-                        criteria: 'Enkelt: Nämner råvaror/kapital. Utvecklat: Kopplar samman jordbruket, råvaror och ångmaskinen.'
-                    },
-                    {
-                        id: 2,
-                        type: 'mc',
-                        text: 'Vilka uppfinningar var viktiga under denna period?',
-                        options: ['Ångmaskinen', 'Spinning Jenny', 'Smartphonen', 'Glödlampan'],
-                        correctOptions: [0, 1],
-                        criteria: 'Ångmaskinen och Spinning Jenny är rätt.'
-                    }
-                ],
-                submissions: generateMockSubmissions('ex-101')
-            },
-            {
-                id: 'ex-102',
-                title: 'Sveriges riksdag & regering',
-                type: 'Entryticket',
-                category: 'Samhällskunskap',
-                klass: '8B',
-                date: '2026-10-14',
-                code: '9900',
-                active: true,
-                questions: [
-                    { id: 1, type: 'concept', concept: 'Riksdag', criteria: 'Sveriges högsta beslutande organ, 349 ledamöter stiftar lagar.' },
-                    { id: 2, type: 'concept', concept: 'Regering', criteria: 'Styr landet och genomför riksdagens beslut.' }
-                ],
-                submissions: generateMockSubmissions('ex-102')
-            }
-        ];
-
-        function generateMockSubmissions(examId) {
-            const names = ['Alice Svensson', 'Bob Carlsson', 'Charlie Ek', 'Diana Berg', 'Erik Lind', 'Filippa Holm'];
-            return names.map((name, idx) => {
-                let status = 'Inlämnat';
-                let warnings = 0;
-                let dots = ['darkgreen', 'lightgreen'];
-                
-                if (idx === 2) {
-                    warnings = 1; // Gult kort
-                } else if (idx === 4) {
-                    warnings = 2; // Rött kort (Låst)
-                    status = 'Låst (Rött kort)';
-                    dots = ['red', 'red'];
-                }
-
-                return {
-                    id: 'sub-' + idx,
-                    examId: examId,
-                    studentName: name,
-                    studentClass: '8B',
-                    submittedAt: '2026-10-14 10:' + (10 + idx),
-                    status: status,
-                    warnings: warnings,
-                    answers: { 1: 'Ett bra svar från ' + name, 2: 'Svar del 2' },
-                    feedback: dots.map((d, i) => ({
-                        questionId: i + 1,
-                        statusDot: d, 
-                        text: d === 'red' ? 'Behöver övas mer på.' : (d === 'lightgreen' ? 'Godkänt och korrekt svar.' : 'Välutvecklat och strukturerat resonemang!')
-                    }))
-                };
-            });
-        }
+// Hämta prov från Supabase
 async function getExams() {
-    const { data, error } = await db.from('exams').select('*');
-    if (error) {
-        console.error('Fel vid hämtning från Supabase:', error);
-        return [];
+    if (!db) return typeof defaultExams !== 'undefined' ? defaultExams : [];
+    try {
+        const { data, error } = await db.from('exams').select('*');
+        if (error || !data) throw error;
+        return data;
+    } catch (e) {
+        console.error("Kunde inte hämta från Supabase, använder fallback:", e);
+        return typeof defaultExams !== 'undefined' ? defaultExams : [];
     }
-    return data || [];
 }
 
+// Spara prov till Supabase
 async function saveExamToDB(exam) {
-    const { data, error } = await db.from('exams').upsert({
-        id: exam.id,
-        title: exam.title,
-        type: exam.type,
-        category: exam.category,
-        klass: exam.klass,
-        code: exam.code,
-        active: exam.active,
-        questions: exam.questions
-    });
-    if (error) console.error('Fel vid sparande till Supabase:', error);
+    if (!db) return;
+    try {
+        const { error } = await db.from('exams').upsert(exam);
+        if (error) console.error("Fel vid sparande:", error);
+    } catch (e) {
+        console.error("Databasfel:", e);
+    }
 }
 
-async function saveSubmissionToDB(submission) {
-    const { data, error } = await db.from('submissions').upsert({
-        id: submission.id,
-        exam_id: submission.examId,
-        student_name: submission.studentName,
-        student_class: submission.studentClass,
-        status: submission.status,
-        warnings: submission.warnings,
-        answers: submission.answers,
-        feedback: submission.feedback,
-        submitted_at: submission.submittedAt
-    });
-    if (error) console.error('Fel vid sparande av inlämning:', error);
-}
-        
 // Huvudrendering
 async function render() {
     const app = document.getElementById('app');
     const navRight = document.getElementById('navRight');
     if (!app) return;
 
-    // 1. Rendera navigeringen högst upp
     if (navRight) {
         if (state.view.startsWith('admin')) {
             navRight.innerHTML = `
@@ -235,7 +143,6 @@ async function render() {
         }
     }
 
-    // 2. Hämta prov från Supabase
     let exams = [];
     try {
         exams = await getExams();
@@ -243,7 +150,6 @@ async function render() {
         console.error("Kunde inte hämta prov:", e);
     }
 
-    // 3. Rita ut rätt vy
     switch (state.view) {
         case 'welcome': renderWelcome(app, exams); break;
         case 'student_code': renderStudentCode(app); break;
