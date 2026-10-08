@@ -13,19 +13,18 @@
         .no-select { user-select: none; -webkit-user-select: none; }
         textarea, input { -webkit-user-select: text; }
         
-        /* Tydliga färgnyanser för pluppar */
         .dot-darkgreen {
-            background-color: #064e3b; /* Deep Forest Green */
+            background-color: #064e3b;
             border: 2px solid #022c22;
             color: #ffffff;
         }
         .dot-lightgreen {
-            background-color: #22c55e; /* Bright Light Green */
+            background-color: #22c55e;
             border: 2px solid #15803d;
             color: #ffffff;
         }
         .dot-red {
-            background-color: #ef4444; /* Red */
+            background-color: #ef4444;
             border: 2px solid #b91c1c;
             color: #ffffff;
         }
@@ -79,7 +78,7 @@
     </div>
 
 <script>
-window.onerror = null; // Rensa gamla felhanteraren
+window.onerror = null;
 
 const SUPABASE_URL = 'https://omjeuavtqdrktxohmebm.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_Ujz1Opw_GfsUnLFb18nTbg_zZHsWpnT';
@@ -96,19 +95,26 @@ const state = {
     geminiApiKey: '',
     answers: {},
     submittedResult: null,
-    editingExam: null
+    editingExam: null,
+    cachedExams: [] // Håller den senaste provlistan i minnet för snabba uppdateringar
 };
+
+function goHome() {
+    state.view = 'welcome';
+    render();
+}
 
 // Hämta prov från Supabase
 async function getExams() {
-    if (!db) return typeof defaultExams !== 'undefined' ? defaultExams : [];
+    if (!db) return [];
     try {
         const { data, error } = await db.from('exams').select('*');
         if (error || !data) throw error;
+        state.cachedExams = data;
         return data;
     } catch (e) {
-        console.error("Kunde inte hämta från Supabase, använder fallback:", e);
-        return typeof defaultExams !== 'undefined' ? defaultExams : [];
+        console.error("Kunde inte hämta från Supabase:", e);
+        return state.cachedExams || [];
     }
 }
 
@@ -117,7 +123,10 @@ async function saveExamToDB(exam) {
     if (!db) return;
     try {
         const { error } = await db.from('exams').upsert(exam);
-        if (error) console.error("Fel vid sparande:", error);
+        if (error) {
+            console.error("Fel vid sparande till Supabase:", error);
+            alert("Databasfel vid sparande: " + error.message);
+        }
     } catch (e) {
         console.error("Databasfel:", e);
     }
@@ -143,12 +152,7 @@ async function render() {
         }
     }
 
-    let exams = [];
-    try {
-        exams = await getExams();
-    } catch (e) {
-        console.error("Kunde inte hämta prov:", e);
-    }
+    let exams = await getExams();
 
     switch (state.view) {
         case 'welcome': renderWelcome(app, exams); break;
@@ -156,1090 +160,1059 @@ async function render() {
         case 'student_exam': renderStudentExam(app); break;
         case 'student_result': renderStudentResult(app); break;
         case 'admin': renderAdmin(app, exams); break;
-        case 'admin_screen': renderAdminScreen(app); break;
-        case 'admin_board': renderAdminBoard(app); break;
+        case 'admin_screen': renderAdminScreen(app, exams); break;
+        case 'admin_board': renderAdminBoard(app, exams); break;
         case 'admin_edit': renderAdminEdit(app); break;
         default: renderWelcome(app, exams); break;
     }
 }
+
 // --- VY: VÄLKOMSTSIDA ---
 function renderWelcome(container, exams) {
     const activeClasses = [...new Set(exams.filter(e => e.active).map(e => e.klass))];
     
-            container.innerHTML = `
-                <div class="max-w-xl mx-auto mt-6 bg-white rounded-2xl border border-slate-200 shadow-xl p-6 sm:p-8">
-                    <div class="text-center mb-8">
-                        <span class="inline-block px-3 py-1 bg-indigo-100 text-indigo-700 text-xs font-semibold rounded-full uppercase tracking-wider mb-2">Elevportal</span>
-                        <h2 class="text-2xl sm:text-3xl font-extrabold text-slate-900">Välkommen till Waltelius testar</h2>
-                        <p class="text-sm text-slate-600 mt-2">
-                            Fyll i ditt namn och välj din klass. Välj därefter uppgift och klicka på "Gå vidare till kod".
-                        </p>
-                    </div>
+    container.innerHTML = `
+        <div class="max-w-xl mx-auto mt-6 bg-white rounded-2xl border border-slate-200 shadow-xl p-6 sm:p-8">
+            <div class="text-center mb-8">
+                <span class="inline-block px-3 py-1 bg-indigo-100 text-indigo-700 text-xs font-semibold rounded-full uppercase tracking-wider mb-2">Elevportal</span>
+                <h2 class="text-2xl sm:text-3xl font-extrabold text-slate-900">Välkommen till Waltelius testar</h2>
+                <p class="text-sm text-slate-600 mt-2">
+                    Fyll i ditt namn och välj din klass. Välj därefter uppgift och klicka på "Gå vidare till kod".
+                </p>
+            </div>
 
-                    <form onsubmit="handleWelcomeSubmit(event)" class="space-y-5">
-                        <div>
-                            <label class="block text-sm font-semibold text-slate-700 mb-1">Ditt För- och Efternamn</label>
-                            <input type="text" id="studentName" required placeholder="t.ex. Anna Svensson" 
-                                autocomplete="off" class="w-full px-4 py-3 rounded-xl border border-slate-300 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition">
-                        </div>
-
-                        <div>
-                            <label class="block text-sm font-semibold text-slate-700 mb-1">Klass</label>
-                            <select id="studentClass" required onchange="updateExamDropdown()" class="w-full px-4 py-3 rounded-xl border border-slate-300 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none bg-white transition">
-                                <option value="">-- Välj din klass --</option>
-                                ${activeClasses.map(c => `<option value="${c}">${c}</option>`).join('')}
-                            </select>
-                        </div>
-
-                        <div>
-                            <label class="block text-sm font-semibold text-slate-700 mb-1">Välj Material / Uppgift</label>
-                            <select id="studentExamSelect" required disabled class="w-full px-4 py-3 rounded-xl border border-slate-300 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none bg-white transition disabled:bg-slate-100 disabled:text-slate-400">
-                                <option value="">-- Välj klass först --</option>
-                            </select>
-                        </div>
-
-                        <button type="submit" class="w-full py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-lg hover:shadow-indigo-200 transition transform active:scale-98 flex items-center justify-center space-x-2">
-                            <span>Gå vidare till kod</span>
-                            <i class="fa-solid fa-arrow-right"></i>
-                        </button>
-                    </form>
+            <form onsubmit="handleWelcomeSubmit(event)" class="space-y-5">
+                <div>
+                    <label class="block text-sm font-semibold text-slate-700 mb-1">Ditt För- och Efternamn</label>
+                    <input type="text" id="studentName" required placeholder="t.ex. Anna Svensson" 
+                        autocomplete="off" class="w-full px-4 py-3 rounded-xl border border-slate-300 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition">
                 </div>
-            `;
-        }
 
-        function updateExamDropdown() {
-            const klass = document.getElementById('studentClass').value;
-            const select = document.getElementById('studentExamSelect');
-            const exams = getExams().filter(e => e.active && e.klass === klass);
-
-            if (!klass || exams.length === 0) {
-                select.innerHTML = '<option value="">-- Inga aktiva uppgifter för vald klass --</option>';
-                select.disabled = true;
-                return;
-            }
-
-            select.disabled = false;
-            select.innerHTML = '<option value="">-- Välj uppgift --</option>' + 
-                exams.map(e => `<option value="${e.id}">${e.title} (${e.type} - ${e.category})</option>`).join('');
-        }
-
-        function handleWelcomeSubmit(e) {
-            e.preventDefault();
-            const name = document.getElementById('studentName').value.trim();
-            const klass = document.getElementById('studentClass').value;
-            const examId = document.getElementById('studentExamSelect').value;
-
-            if (!name || !klass || !examId) return;
-
-            const exams = getExams();
-            const exam = exams.find(e => e.id === examId);
-
-            const existingSub = exam.submissions && exam.submissions.find(s => s.studentName.toLowerCase() === name.toLowerCase() && s.studentClass === klass);
-            
-            if (existingSub && existingSub.status === 'Låst (Rött kort)') {
-                alert("Ditt konto är tillfälligt låst på grund av fuskvarning. Be din lärare aktivera dig igen på skärmen.");
-                return;
-            } else if (existingSub && existingSub.status === 'Inlämnat') {
-                alert("Du har redan lämnat in denna uppgift.");
-                return;
-            }
-
-            state.currentUser = { name, class: klass };
-            state.selectedExamId = examId;
-            state.activeExam = exam;
-            state.view = 'student_code';
-            render();
-        }
-
-        // --- VY: INMATNING AV PROVKOD ---
-        function renderStudentCode(container) {
-            container.innerHTML = `
-                <div class="max-w-md mx-auto mt-12 bg-white rounded-2xl border border-slate-200 shadow-xl p-6 sm:p-8 text-center">
-                    <div class="w-14 h-14 bg-indigo-100 text-indigo-600 rounded-2xl flex items-center justify-center mx-auto mb-4 text-2xl">
-                        <i class="fa-solid fa-key"></i>
-                    </div>
-                    <h2 class="text-2xl font-bold text-slate-900 mb-1">Ange Provkod</h2>
-                    <p class="text-xs text-slate-500 mb-6">Slå in den 4-siffriga koden som din lärare visar på tavlan.</p>
-
-                    <form onsubmit="handleCodeSubmit(event)" class="space-y-4">
-                        <input type="text" id="inputCode" maxlength="4" required placeholder="0 0 0 0"
-                            class="w-full text-center text-3xl font-mono tracking-widest py-3 border-2 border-slate-300 rounded-xl focus:border-indigo-600 outline-none uppercase">
-                        
-                        <div id="codeError" class="text-red-500 text-xs font-semibold hidden">Felaktig kod. Försök igen.</div>
-
-                        <div class="flex space-x-3 pt-2">
-                            <button type="button" onclick="state.view='welcome'; render();" class="w-1/2 py-3 bg-slate-100 text-slate-700 font-semibold rounded-xl hover:bg-slate-200">
-                                Tillbaka
-                            </button>
-                            <button type="submit" class="w-1/2 py-3 bg-indigo-600 text-white font-semibold rounded-xl hover:bg-indigo-700 shadow-md">
-                                Starta
-                            </button>
-                        </div>
-                    </form>
+                <div>
+                    <label class="block text-sm font-semibold text-slate-700 mb-1">Klass</label>
+                    <select id="studentClass" required onchange="updateExamDropdown()" class="w-full px-4 py-3 rounded-xl border border-slate-300 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none bg-white transition">
+                        <option value="">-- Välj din klass --</option>
+                        ${activeClasses.map(c => `<option value="${c}">${c}</option>`).join('')}
+                    </select>
                 </div>
-            `;
-        }
 
-        function handleCodeSubmit(e) {
-            e.preventDefault();
-            const code = document.getElementById('inputCode').value.trim();
-            const error = document.getElementById('codeError');
+                <div>
+                    <label class="block text-sm font-semibold text-slate-700 mb-1">Välj Material / Uppgift</label>
+                    <select id="studentExamSelect" required disabled class="w-full px-4 py-3 rounded-xl border border-slate-300 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none bg-white transition disabled:bg-slate-100 disabled:text-slate-400">
+                        <option value="">-- Välj klass först --</option>
+                    </select>
+                </div>
 
-            if (code === state.activeExam.code) {
-                state.warningCount = 0;
-                state.hasCheatedModalShown = false;
-                state.answers = {};
+                <button type="submit" class="w-full py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-lg hover:shadow-indigo-200 transition transform active:scale-98 flex items-center justify-center space-x-2">
+                    <span>Gå vidare till kod</span>
+                    <i class="fa-solid fa-arrow-right"></i>
+                </button>
+            </form>
+        </div>
+    `;
+}
+
+function updateExamDropdown() {
+    const klass = document.getElementById('studentClass').value;
+    const select = document.getElementById('studentExamSelect');
+    const exams = state.cachedExams.filter(e => e.active && e.klass === klass);
+
+    if (!klass || exams.length === 0) {
+        select.innerHTML = '<option value="">-- Inga aktiva uppgifter för vald klass --</option>';
+        select.disabled = true;
+        return;
+    }
+
+    select.disabled = false;
+    select.innerHTML = '<option value="">-- Välj uppgift --</option>' + 
+        exams.map(e => `<option value="${e.id}">${e.title} (${e.type} - ${e.category})</option>`).join('');
+}
+
+async function handleWelcomeSubmit(e) {
+    e.preventDefault();
+    const name = document.getElementById('studentName').value.trim();
+    const klass = document.getElementById('studentClass').value;
+    const examId = document.getElementById('studentExamSelect').value;
+
+    if (!name || !klass || !examId) return;
+
+    const exams = state.cachedExams;
+    const exam = exams.find(e => e.id === examId);
+
+    const existingSub = exam.submissions && exam.submissions.find(s => s.studentName.toLowerCase() === name.toLowerCase() && s.studentClass === klass);
+    
+    if (existingSub && existingSub.status === 'Låst (Rött kort)') {
+        alert("Ditt konto är tillfälligt låst på grund av fuskvarning. Be din lärare aktivera dig igen på skärmen.");
+        return;
+    } else if (existingSub && existingSub.status === 'Inlämnat') {
+        alert("Du har redan lämnat in denna uppgift.");
+        return;
+    }
+
+    state.currentUser = { name, class: klass };
+    state.selectedExamId = examId;
+    state.activeExam = exam;
+    state.view = 'student_code';
+    render();
+}
+
+// --- VY: INMATNING AV PROVKOD ---
+function renderStudentCode(container) {
+    container.innerHTML = `
+        <div class="max-w-md mx-auto mt-12 bg-white rounded-2xl border border-slate-200 shadow-xl p-6 sm:p-8 text-center">
+            <div class="w-14 h-14 bg-indigo-100 text-indigo-600 rounded-2xl flex items-center justify-center mx-auto mb-4 text-2xl">
+                <i class="fa-solid fa-key"></i>
+            </div>
+            <h2 class="text-2xl font-bold text-slate-900 mb-1">Ange Provkod</h2>
+            <p class="text-xs text-slate-500 mb-6">Slå in den 4-siffriga koden som din lärare visar på tavlan.</p>
+
+            <form onsubmit="handleCodeSubmit(event)" class="space-y-4">
+                <input type="text" id="inputCode" maxlength="4" required placeholder="0 0 0 0"
+                    class="w-full text-center text-3xl font-mono tracking-widest py-3 border-2 border-slate-300 rounded-xl focus:border-indigo-600 outline-none uppercase">
                 
-                // Registrera eleven i submissions som "Pågår" om inte redan där
-                let exam = state.activeExam;
-                if (!exam.submissions) exam.submissions = [];
-                let sub = exam.submissions.find(s => s.studentName.toLowerCase() === state.currentUser.name.toLowerCase());
-                if (!sub) {
-                    exam.submissions.push({
-                        id: 'sub-' + Date.now(),
-                        examId: exam.id,
-                        studentName: state.currentUser.name,
-                        studentClass: state.currentUser.class,
-                        submittedAt: null,
-                        status: 'Pågår',
-                        warnings: 0,
-                        answers: {},
-                        feedback: []
-                    });
-                    const exams = getExams();
-                    const idx = exams.findIndex(e => e.id === exam.id);
-                    if (idx !== -1) {
-                        exams[idx] = exam;
-                        saveExams(exams);
-                    }
-                }
+                <div id="codeError" class="text-red-500 text-xs font-semibold hidden">Felaktig kod. Försök igen.</div>
 
-                state.view = 'student_exam';
-                setupCheatDetection();
-                render();
-            } else {
-                error.classList.remove('hidden');
-            }
-        }
-
-        // --- FLIKBYTESDETEKTERING ---
-        function setupCheatDetection() {
-            window.onvisibilitychange = () => {
-                if (document.hidden && state.view === 'student_exam') {
-                    triggerCheatWarning();
-                }
-            };
-            window.onblur = () => {
-                if (state.view === 'student_exam') {
-                    triggerCheatWarning();
-                }
-            };
-        }
-
-        function triggerCheatWarning() {
-            state.warningCount++;
-            
-            // Uppdatera status i lagringen
-            const exams = getExams();
-            const exam = exams.find(e => e.id === state.activeExam.id);
-            if (exam) {
-                const sub = exam.submissions.find(s => s.studentName.toLowerCase() === state.currentUser.name.toLowerCase());
-                if (sub) {
-                    sub.warnings = state.warningCount;
-                    if (state.warningCount >= 2) {
-                        sub.status = 'Låst (Rött kort)';
-                    }
-                    saveExams(exams);
-                }
-            }
-
-            const modal = document.getElementById('cheatWarningModal');
-            const title = document.getElementById('warningTitle');
-            const msg = document.getElementById('warningMessage');
-
-            if (state.warningCount === 1) {
-                title.innerText = "Gult Kort: Du lämnade sidan!";
-                msg.innerText = "Du har lämnat provfönstret 1 gång. Detta syns nu för läraren. Om du lämnar sidan igen låses ditt prov (Rött kort).";
-                modal.classList.remove('hidden');
-            } else if (state.warningCount >= 2) {
-                title.innerText = "Rött Kort: Provet låst!";
-                msg.innerText = "Du lämnade sidan igen. Ditt prov har låsts. Kontakta din lärare på skärmen för att bli upplåst.";
-                modal.classList.remove('hidden');
-            }
-        }
-
-        function closeWarningModal() {
-            document.getElementById('cheatWarningModal').classList.add('hidden');
-            if (state.warningCount >= 2) {
-                state.view = 'welcome';
-                render();
-            }
-        }
-
-        // --- VY: PROVGENOMFÖRANDE (STUDENT_EXAM) ---
-        function renderStudentExam(container) {
-            const isEntryOrExit = state.activeExam.type === 'Entryticket' || state.activeExam.type === 'Exitticket';
-            const displayTitle = isEntryOrExit ? 'Minns du?' : state.activeExam.title;
-
-            container.innerHTML = `
-                <div class="max-w-3xl mx-auto space-y-6">
-                    <div class="bg-indigo-600 rounded-2xl p-6 text-white shadow-lg flex items-center justify-between">
-                        <div>
-                            <span class="text-xs uppercase tracking-wider font-semibold opacity-80">${state.activeExam.type} • ${state.activeExam.category}</span>
-                            <h2 class="text-2xl font-bold">${displayTitle}</h2>
-                            <p class="text-xs opacity-90 mt-1">Elev: ${state.currentUser.name} (${state.currentUser.class})</p>
-                        </div>
-                        <div class="bg-white/10 px-4 py-2 rounded-xl backdrop-blur-sm text-right">
-                            <span class="text-xs block opacity-75">Status</span>
-                            <span class="font-bold text-sm text-emerald-300">Aktivt prov</span>
-                        </div>
-                    </div>
-
-                    <form onsubmit="handleExamSubmit(event)" class="space-y-6">
-                        ${state.activeExam.questions.map((q, idx) => renderStudentQuestion(q, idx)).join('')}
-
-                        <div class="bg-white rounded-2xl border border-slate-200 p-6 text-center shadow-sm">
-                            <p class="text-xs text-slate-500 mb-4">Kontrollera dina svar noggrant innan du lämnar in.</p>
-                            <button type="submit" class="w-full sm:w-auto px-8 py-3.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl shadow-lg transition transform active:scale-95">
-                                <i class="fa-solid fa-paper-plane mr-2"></i> Lämna in svar
-                            </button>
-                        </div>
-                    </form>
+                <div class="flex space-x-3 pt-2">
+                    <button type="button" onclick="state.view='welcome'; render();" class="w-1/2 py-3 bg-slate-100 text-slate-700 font-semibold rounded-xl hover:bg-slate-200">
+                        Tillbaka
+                    </button>
+                    <button type="submit" class="w-1/2 py-3 bg-indigo-600 text-white font-semibold rounded-xl hover:bg-indigo-700 shadow-md">
+                        Starta
+                    </button>
                 </div>
-            `;
-        }
+            </form>
+        </div>
+    `;
+}
 
-        function renderStudentQuestion(q, idx) {
-            if (q.type === 'concept') {
-                return `
-                    <div class="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm">
-                        <div class="flex items-center space-x-2 text-indigo-600 font-bold text-sm mb-2">
-                            <span>Begrepp ${idx + 1}</span>
-                        </div>
-                        <h3 class="text-lg font-bold text-slate-900 mb-3">Förklara begreppet: <span class="text-indigo-600 font-extrabold">${q.concept}</span></h3>
-                        <textarea required onchange="state.answers[${q.id}] = this.value" rows="3" placeholder="Skriv din förklaring här..."
-                            class="w-full p-4 rounded-xl border border-slate-300 focus:ring-2 focus:ring-indigo-500 outline-none text-sm"></textarea>
-                    </div>
-                `;
-            } else if (q.type === 'mc') {
-                const multiChoiceNote = (q.correctOptions && q.correctOptions.length > 1) 
-                    ? `<p class="text-xs font-semibold text-amber-600 mb-3"><i class="fa-solid fa-circle-info mr-1"></i> Obs! Denna fråga har ${q.correctOptions.length} korrekta svar.</p>` 
-                    : '';
+async function handleCodeSubmit(e) {
+    e.preventDefault();
+    const code = document.getElementById('inputCode').value.trim();
+    const error = document.getElementById('codeError');
 
-                return `
-                    <div class="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm">
-                        <div class="text-indigo-600 font-bold text-sm mb-1">Fråga ${idx + 1}</div>
-                        <h3 class="text-base font-bold text-slate-900 mb-2">${q.text}</h3>
-                        ${multiChoiceNote}
-                        <div class="space-y-2">
-                            ${q.options.map((opt, oIdx) => `
-                                <label class="flex items-center p-3 rounded-xl border border-slate-200 hover:bg-slate-50 cursor-pointer transition">
-                                    <input type="${(q.correctOptions && q.correctOptions.length > 1) ? 'checkbox' : 'radio'}" name="q_${q.id}" value="${oIdx}" 
-                                        onchange="saveMCAnswer(${q.id},${oIdx}, this)" class="w-4 h-4 text-indigo-600 focus:ring-indigo-500">
-                                    <span class="ml-3 text-sm text-slate-700">${opt}</span>
-                                </label>
-                            `).join('')}
-                        </div>
-                    </div>
-                `;
-            } else {
-                return `
-                    <div class="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm">
-                        <div class="text-indigo-600 font-bold text-sm mb-1">Fråga ${idx + 1} (Öppen textfråga)</div>
-                        <h3 class="text-base font-bold text-slate-900 mb-3">${q.text}</h3>
-                        <textarea required onchange="state.answers[${q.id}] = this.value" rows="4" placeholder="Skriv ditt svar här..."
-                            class="w-full p-4 rounded-xl border border-slate-300 focus:ring-2 focus:ring-indigo-500 outline-none text-sm"></textarea>
-                    </div>
-                `;
-            }
-        }
-
-        function saveMCAnswer(qId, optionIdx, element) {
-            if (element.type === 'checkbox') {
-                if (!state.answers[qId]) state.answers[qId] = [];
-                if (element.checked) {
-                    if (!state.answers[qId].includes(optionIdx)) state.answers[qId].push(optionIdx);
-                } else {
-                    state.answers[qId] = state.answers[qId].filter(i => i !== optionIdx);
-                }
-            } else {
-                state.answers[qId] = [optionIdx];
-            }
-        }
-
-        function handleExamSubmit(e) {
-            e.preventDefault();
-            
-            // Bedömning
-            const exam = state.activeExam;
-            const feedback = exam.questions.map(q => {
-                let statusDot = 'lightgreen';
-                let text = '';
-
-                if (exam.type === 'Entryticket' || exam.type === 'Exitticket') {
-                    // Ljusgrön eller Röd
-                    const ans = (state.answers[q.id] || '').trim();
-                    if (ans.length > 3) {
-                        statusDot = 'lightgreen';
-                        text = q.criteria ? `Rätt! Korrekt förklaring: ${q.criteria}` : 'Korrekt förstått begrepp!';
-                    } else {
-                        statusDot = 'red';
-                        text = q.criteria ? `Behöver tränas mer. Korrekt förklaring var: ${q.criteria}` : 'Svaret var tyvärr för kort eller felaktigt.';
-                    }
-                } else if (exam.type === 'Träning') {
-                    // Ingen färgbedömning (visas neutralt)
-                    statusDot = 'none';
-                    text = 'Bra jobbat! Tänk på att koppla samman dina argument ännu tydligare framöver.';
-                } else {
-                    // Test: Mörkgrön, Ljusgrön, Röd
-                    const ans = state.answers[q.id];
-                    if (q.type === 'mc') {
-                        const correct = q.correctOptions || [q.correctOption];
-                        const userAns = Array.isArray(ans) ? ans : [ans];
-                        const isAllCorrect = correct.length === userAns.length && correct.every(val => userAns.includes(val));
-                        if (isAllCorrect) {
-                            statusDot = 'darkgreen';
-                            text = 'Alla rätt! Utmärkt.';
-                        } else {
-                            statusDot = 'red';
-                            text = 'Tyvärr fel svar på flervalsfrågan.';
-                        }
-                    } else {
-                        const str = (ans || '').trim();
-                        if (str.length > 50) {
-                            statusDot = 'darkgreen';
-                            text = 'Välutvecklat och strukturerat resonemang med goda kopplingar.';
-                        } else if (str.length > 10) {
-                            statusDot = 'lightgreen';
-                            text = 'Godkänt och enkelt svar.';
-                        } else {
-                            statusDot = 'red';
-                            text = 'Svaret saknar tillräckligt med djup. Behöver övas mer.';
-                        }
-                    }
-                }
-
-                return { questionId: q.id, statusDot, text };
-            });
-
-            const result = {
+    if (code === state.activeExam.code) {
+        state.warningCount = 0;
+        state.hasCheatedModalShown = false;
+        state.answers = {};
+        
+        let exam = state.activeExam;
+        if (!exam.submissions) exam.submissions = [];
+        let sub = exam.submissions.find(s => s.studentName.toLowerCase() === state.currentUser.name.toLowerCase());
+        if (!sub) {
+            exam.submissions.push({
                 id: 'sub-' + Date.now(),
                 examId: exam.id,
                 studentName: state.currentUser.name,
                 studentClass: state.currentUser.class,
-                submittedAt: new Date().toLocaleString('sv-SE'),
-                status: 'Inlämnat',
-                warnings: state.warningCount,
-                answers: state.answers,
-                feedback: feedback
-            };
-
-            // Spara i LocalStorage
-            const exams = getExams();
-            const examIdx = exams.findIndex(ex => ex.id === exam.id);
-            if (examIdx !== -1) {
-                if (!exams[examIdx].submissions) exams[examIdx].submissions = [];
-                // Ersätt eller lägg till
-                const subIdx = exams[examIdx].submissions.findIndex(s => s.studentName.toLowerCase() === state.currentUser.name.toLowerCase());
-                if (subIdx !== -1) {
-                    exams[examIdx].submissions[subIdx] = result;
-                } else {
-                    exams[examIdx].submissions.push(result);
-                }
-                saveExams(exams);
-            }
-
-            state.submittedResult = result;
-            state.view = 'student_result';
-            render();
+                submittedAt: null,
+                status: 'Pågår',
+                warnings: 0,
+                answers: {},
+                feedback: []
+            });
+            await saveExamToDB(exam);
         }
 
-        // --- VY: RESULTAT OCH KVITTO ELEV ---
-        function renderStudentResult(container) {
-            const res = state.submittedResult;
-            const isTraning = state.activeExam.type === 'Träning';
+        state.view = 'student_exam';
+        setupCheatDetection();
+        render();
+    } else {
+        error.classList.remove('hidden');
+    }
+}
 
-            container.innerHTML = `
-                <div class="max-w-2xl mx-auto mt-8 bg-white rounded-2xl border border-slate-200 shadow-xl p-6 sm:p-8">
-                    <div class="text-center mb-6">
-                        <div class="w-16 h-16 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto mb-3 text-3xl">
-                            <i class="fa-solid fa-circle-check"></i>
-                        </div>
-                        <h2 class="text-2xl font-bold text-slate-900">Inlämning mottagen!</h2>
-                        <p class="text-sm text-slate-500">Tack ${res.studentName}, din uppgift är nu registrerad.</p>
-                    </div>
+// --- FLIKBYTESDETEKTERING ---
+function setupCheatDetection() {
+    window.onvisibilitychange = () => {
+        if (document.hidden && state.view === 'student_exam') {
+            triggerCheatWarning();
+        }
+    };
+    window.onblur = () => {
+        if (state.view === 'student_exam') {
+            triggerCheatWarning();
+        }
+    };
+}
 
-                    <div class="space-y-4 mb-8">
-                        <h3 class="font-bold text-slate-800 text-sm uppercase tracking-wider">Direkt Respons & Feedback</h3>
-                        ${res.feedback.map((f, idx) => `
-                            <div class="p-4 rounded-xl border border-slate-200 bg-slate-50 flex items-start space-x-3">
-                                ${!isTraning ? renderDotBadge(f.statusDot) : ''}
-                                <div class="flex-1">
-                                    <div class="font-semibold text-xs text-slate-500">Fråga / Begrepp ${idx + 1}</div>
-                                    <p class="text-sm text-slate-800 font-medium mt-1">${f.text}</p>
-                                </div>
-                            </div>
-                        `).join('')}
-                    </div>
+async function triggerCheatWarning() {
+    state.warningCount++;
+    
+    let exam = state.activeExam;
+    if (exam && exam.submissions) {
+        const sub = exam.submissions.find(s => s.studentName.toLowerCase() === state.currentUser.name.toLowerCase());
+        if (sub) {
+            sub.warnings = state.warningCount;
+            if (state.warningCount >= 2) {
+                sub.status = 'Låst (Rött kort)';
+            }
+            await saveExamToDB(exam);
+        }
+    }
 
-                    <button onclick="state.view='welcome'; render();" class="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-md transition">
-                        Tillbaka till startsidan
+    const modal = document.getElementById('cheatWarningModal');
+    const title = document.getElementById('warningTitle');
+    const msg = document.getElementById('warningMessage');
+
+    if (state.warningCount === 1) {
+        title.innerText = "Gult Kort: Du lämnade sidan!";
+        msg.innerText = "Du har lämnat provfönstret 1 gång. Detta syns nu för läraren. Om du lämnar sidan igen låses ditt prov (Rött kort).";
+        modal.classList.remove('hidden');
+    } else if (state.warningCount >= 2) {
+        title.innerText = "Rött Kort: Provet låst!";
+        msg.innerText = "Du lämnade sidan igen. Ditt prov har låsts. Kontakta din lärare på skärmen för att bli upplåst.";
+        modal.classList.remove('hidden');
+    }
+}
+
+function closeWarningModal() {
+    document.getElementById('cheatWarningModal').classList.add('hidden');
+    if (state.warningCount >= 2) {
+        state.view = 'welcome';
+        render();
+    }
+}
+
+// --- VY: PROVGENOMFÖRANDE (STUDENT_EXAM) ---
+function renderStudentExam(container) {
+    const isEntryOrExit = state.activeExam.type === 'Entryticket' || state.activeExam.type === 'Exitticket';
+    const displayTitle = isEntryOrExit ? 'Minns du?' : state.activeExam.title;
+
+    container.innerHTML = `
+        <div class="max-w-3xl mx-auto space-y-6">
+            <div class="bg-indigo-600 rounded-2xl p-6 text-white shadow-lg flex items-center justify-between">
+                <div>
+                    <span class="text-xs uppercase tracking-wider font-semibold opacity-80">${state.activeExam.type} • ${state.activeExam.category}</span>
+                    <h2 class="text-2xl font-bold">${displayTitle}</h2>
+                    <p class="text-xs opacity-90 mt-1">Elev: ${state.currentUser.name} (${state.currentUser.class})</p>
+                </div>
+                <div class="bg-white/10 px-4 py-2 rounded-xl backdrop-blur-sm text-right">
+                    <span class="text-xs block opacity-75">Status</span>
+                    <span class="font-bold text-sm text-emerald-300">Aktivt prov</span>
+                </div>
+            </div>
+
+            <form onsubmit="handleExamSubmit(event)" class="space-y-6">
+                ${state.activeExam.questions.map((q, idx) => renderStudentQuestion(q, idx)).join('')}
+
+                <div class="bg-white rounded-2xl border border-slate-200 p-6 text-center shadow-sm">
+                    <p class="text-xs text-slate-500 mb-4">Kontrollera dina svar noggrant innan du lämnar in.</p>
+                    <button type="submit" class="w-full sm:w-auto px-8 py-3.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl shadow-lg transition transform active:scale-95">
+                        <i class="fa-solid fa-paper-plane mr-2"></i> Lämna in svar
                     </button>
                 </div>
-            `;
+            </form>
+        </div>
+    `;
+}
+
+function renderStudentQuestion(q, idx) {
+    if (q.type === 'concept') {
+        return `
+            <div class="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm">
+                <div class="flex items-center space-x-2 text-indigo-600 font-bold text-sm mb-2">
+                    <span>Begrepp ${idx + 1}</span>
+                </div>
+                <h3 class="text-lg font-bold text-slate-900 mb-3">Förklara begreppet: <span class="text-indigo-600 font-extrabold">${q.concept}</span></h3>
+                <textarea required onchange="state.answers[${q.id}] = this.value" rows="3" placeholder="Skriv din förklaring här..."
+                    class="w-full p-4 rounded-xl border border-slate-300 focus:ring-2 focus:ring-indigo-500 outline-none text-sm"></textarea>
+            </div>
+        `;
+    } else if (q.type === 'mc') {
+        const multiChoiceNote = (q.correctOptions && q.correctOptions.length > 1) 
+            ? `<p class="text-xs font-semibold text-amber-600 mb-3"><i class="fa-solid fa-circle-info mr-1"></i> Obs! Denna fråga har ${q.correctOptions.length} korrekta svar.</p>` 
+            : '';
+
+        return `
+            <div class="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm">
+                <div class="text-indigo-600 font-bold text-sm mb-1">Fråga ${idx + 1}</div>
+                <h3 class="text-base font-bold text-slate-900 mb-2">${q.text}</h3>
+                ${multiChoiceNote}
+                <div class="space-y-2">
+                    ${q.options.map((opt, oIdx) => `
+                        <label class="flex items-center p-3 rounded-xl border border-slate-200 hover:bg-slate-50 cursor-pointer transition">
+                            <input type="${(q.correctOptions && q.correctOptions.length > 1) ? 'checkbox' : 'radio'}" name="q_${q.id}" value="${oIdx}" 
+                                onchange="saveMCAnswer(${q.id},${oIdx}, this)" class="w-4 h-4 text-indigo-600 focus:ring-indigo-500">
+                            <span class="ml-3 text-sm text-slate-700">${opt}</span>
+                        </label>
+                    `).join('')}
+                </div>
+            </div>
+        `;
+    } else {
+        return `
+            <div class="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm">
+                <div class="text-indigo-600 font-bold text-sm mb-1">Fråga ${idx + 1} (Öppen textfråga)</div>
+                <h3 class="text-base font-bold text-slate-900 mb-3">${q.text}</h3>
+                <textarea required onchange="state.answers[${q.id}] = this.value" rows="4" placeholder="Skriv ditt svar här..."
+                    class="w-full p-4 rounded-xl border border-slate-300 focus:ring-2 focus:ring-indigo-500 outline-none text-sm"></textarea>
+            </div>
+        `;
+    }
+}
+
+function saveMCAnswer(qId, optionIdx, element) {
+    if (element.type === 'checkbox') {
+        if (!state.answers[qId]) state.answers[qId] = [];
+        if (element.checked) {
+            if (!state.answers[qId].includes(optionIdx)) state.answers[qId].push(optionIdx);
+        } else {
+            state.answers[qId] = state.answers[qId].filter(i => i !== optionIdx);
+        }
+    } else {
+        state.answers[qId] = [optionIdx];
+    }
+}
+
+async function handleExamSubmit(e) {
+    e.preventDefault();
+    
+    const exam = state.activeExam;
+    const feedback = exam.questions.map(q => {
+        let statusDot = 'lightgreen';
+        let text = '';
+
+        if (exam.type === 'Entryticket' || exam.type === 'Exitticket') {
+            const ans = (state.answers[q.id] || '').trim();
+            if (ans.length > 3) {
+                statusDot = 'lightgreen';
+                text = q.criteria ? `Rätt! Korrekt förklaring: ${q.criteria}` : 'Korrekt förstått begrepp!';
+            } else {
+                statusDot = 'red';
+                text = q.criteria ? `Behöver tränas mer. Korrekt förklaring var: ${q.criteria}` : 'Svaret var tyvärr för kort eller felaktigt.';
+            }
+        } else if (exam.type === 'Träning') {
+            statusDot = 'none';
+            text = 'Bra jobbat! Tänk på att koppla samman dina argument ännu tydligare framöver.';
+        } else {
+            const ans = state.answers[q.id];
+            if (q.type === 'mc') {
+                const correct = q.correctOptions || [q.correctOption];
+                const userAns = Array.isArray(ans) ? ans : [ans];
+                const isAllCorrect = correct.length === userAns.length && correct.every(val => userAns.includes(val));
+                if (isAllCorrect) {
+                    statusDot = 'darkgreen';
+                    text = 'Alla rätt! Utmärkt.';
+                } else {
+                    statusDot = 'red';
+                    text = 'Tyvärr fel svar på flervalsfrågan.';
+                }
+            } else {
+                const str = (ans || '').trim();
+                if (str.length > 50) {
+                    statusDot = 'darkgreen';
+                    text = 'Välutvecklat och strukturerat resonemang med goda kopplingar.';
+                } else if (str.length > 10) {
+                    statusDot = 'lightgreen';
+                    text = 'Godkänt och enkelt svar.';
+                } else {
+                    statusDot = 'red';
+                    text = 'Svaret saknar tillräckligt med djup. Behöver övas mer.';
+                }
+            }
         }
 
-        function renderDotBadge(statusDot) {
-            if (statusDot === 'darkgreen') {
-                return `<div class="w-7 h-7 rounded-full dot-darkgreen flex items-center justify-center font-bold text-xs shadow-sm flex-shrink-0" title="Välutvecklat (Mörkgrön)">★</div>`;
-            } else if (statusDot === 'lightgreen') {
-                return `<div class="w-7 h-7 rounded-full dot-lightgreen flex items-center justify-center font-bold text-xs shadow-sm flex-shrink-0" title="Godkänt/Rätt (Ljusgrön)">✓</div>`;
-            } else if (statusDot === 'red') {
-                return `<div class="w-7 h-7 rounded-full dot-red flex items-center justify-center font-bold text-xs shadow-sm flex-shrink-0" title="Behöver övas mer (Röd)">✕</div>`;
-            }
-            return '';
-        }
+        return { questionId: q.id, statusDot, text };
+    });
+
+    const result = {
+        id: 'sub-' + Date.now(),
+        examId: exam.id,
+        studentName: state.currentUser.name,
+        studentClass: state.currentUser.class,
+        submittedAt: new Date().toLocaleString('sv-SE'),
+        status: 'Inlämnat',
+        warnings: state.warningCount,
+        answers: state.answers,
+        feedback: feedback
+    };
+
+    if (!exam.submissions) exam.submissions = [];
+    const subIdx = exam.submissions.findIndex(s => s.studentName.toLowerCase() === state.currentUser.name.toLowerCase());
+    if (subIdx !== -1) {
+        exam.submissions[subIdx] = result;
+    } else {
+        exam.submissions.push(result);
+    }
+    
+    await saveExamToDB(exam);
+
+    state.submittedResult = result;
+    state.view = 'student_result';
+    render();
+}
+
+// --- VY: RESULTAT OCH KVITTO ELEV ---
+function renderStudentResult(container) {
+    const res = state.submittedResult;
+    const isTraning = state.activeExam.type === 'Träning';
+
+    container.innerHTML = `
+        <div class="max-w-2xl mx-auto mt-8 bg-white rounded-2xl border border-slate-200 shadow-xl p-6 sm:p-8">
+            <div class="text-center mb-6">
+                <div class="w-16 h-16 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto mb-3 text-3xl">
+                    <i class="fa-solid fa-circle-check"></i>
+                </div>
+                <h2 class="text-2xl font-bold text-slate-900">Inlämning mottagen!</h2>
+                <p class="text-sm text-slate-500">Tack ${res.studentName}, din uppgift är nu registrerad.</p>
+            </div>
+
+            <div class="space-y-4 mb-8">
+                <h3 class="font-bold text-slate-800 text-sm uppercase tracking-wider">Direkt Respons & Feedback</h3>
+                ${res.feedback.map((f, idx) => `
+                    <div class="p-4 rounded-xl border border-slate-200 bg-slate-50 flex items-start space-x-3">
+                        ${!isTraning ? renderDotBadge(f.statusDot) : ''}
+                        <div class="flex-1">
+                            <div class="font-semibold text-xs text-slate-500">Fråga / Begrepp ${idx + 1}</div>
+                            <p class="text-sm text-slate-800 font-medium mt-1">${f.text}</p>
+                        </div>
+                    </div>
+                `).join('')}
+            </div>
+
+            <button onclick="state.view='welcome'; render();" class="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-md transition">
+                Tillbaka till startsidan
+            </button>
+        </div>
+    `;
+}
+
+function renderDotBadge(statusDot) {
+    if (statusDot === 'darkgreen') {
+        return `<div class="w-7 h-7 rounded-full dot-darkgreen flex items-center justify-center font-bold text-xs shadow-sm flex-shrink-0" title="Välutvecklat (Mörkgrön)">★</div>`;
+    } else if (statusDot === 'lightgreen') {
+        return `<div class="w-7 h-7 rounded-full dot-lightgreen flex items-center justify-center font-bold text-xs shadow-sm flex-shrink-0" title="Godkänt/Rätt (Ljusgrön)">✓</div>`;
+    } else if (statusDot === 'red') {
+        return `<div class="w-7 h-7 rounded-full dot-red flex items-center justify-center font-bold text-xs shadow-sm flex-shrink-0" title="Behöver övas mer (Röd)">✕</div>`;
+    }
+    return '';
+}
 
 // --- VY: ADMIN HUVUDSIDA (RADER OCH KNAPPAR) ---
 function renderAdmin(container, exams) {
-
-  container.innerHTML = `
-                <div class="space-y-6">
-                    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
-                        <div>
-                            <h2 class="text-2xl font-bold text-slate-900">Testpanelen & Hantering</h2>
-                            <p class="text-xs text-slate-500 mt-1">Skapa, aktivera och granska alla uppgifter för dina klasser.</p>
-                        </div>
-                        <button onclick="openCreateExamModal()" class="px-5 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-md transition flex items-center justify-center space-x-2">
-                            <i class="fa-solid fa-plus"></i>
-                            <span>Skapa Ny Uppgift</span>
-                        </button>
-                    </div>
-
-                    <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-                        <div class="p-4 bg-slate-50 border-b border-slate-200 font-bold text-xs text-slate-500 uppercase tracking-wider grid grid-cols-12 gap-2 hidden md:grid">
-                            <div class="col-span-3">Titel & Typ</div>
-                            <div class="col-span-2">Ämne & Klass</div>
-                            <div class="col-span-2">Kod</div>
-                            <div class="col-span-5 text-right">Åtgärder</div>
-                        </div>
-
-                        <div class="divide-y divide-slate-200">
-                            ${exams.map(exam => renderAdminExamRow(exam)).join('')}
-                        </div>
-                    </div>
+    container.innerHTML = `
+        <div class="space-y-6">
+            <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+                <div>
+                    <h2 class="text-2xl font-bold text-slate-900">Testpanelen & Hantering</h2>
+                    <p class="text-xs text-slate-500 mt-1">Skapa, aktivera och granska alla uppgifter för dina klasser.</p>
                 </div>
-            `;
-        }
+                <button onclick="openCreateExamModal()" class="px-5 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-md transition flex items-center justify-center space-x-2">
+                    <i class="fa-solid fa-plus"></i>
+                    <span>Skapa Ny Uppgift</span>
+                </button>
+            </div>
 
-        function renderAdminExamRow(exam) {
-            let dotIcons = '';
-            if (exam.type === 'Test') dotIcons = `<span class="text-xs ml-1">(<span class="text-emerald-900">★</span> <span class="text-emerald-500">✓</span> <span class="text-red-500">✕</span>)</span>`;
-            else if (exam.type === 'Entryticket' || exam.type === 'Exitticket') dotIcons = `<span class="text-xs ml-1">(<span class="text-emerald-500">✓</span> <span class="text-red-500">✕</span>)</span>`;
-
-            return `
-                <div class="p-4 hover:bg-slate-50 transition grid grid-cols-1 md:grid-cols-12 gap-3 items-center">
-                    <div class="md:col-span-3">
-                        <div class="font-bold text-slate-900 flex items-center">
-                            ${exam.title}
-                            ${dotIcons}
-                        </div>
-                        <span class="inline-block px-2 py-0.5 text-xs font-semibold rounded ${exam.active ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-600'} mt-1">
-                            ${exam.type} • ${exam.active ? 'Aktiv' : 'Inaktiv'}
-                        </span>
-                    </div>
-
-                    <div class="md:col-span-2 text-sm text-slate-600">
-                        <div><i class="fa-solid fa-book text-slate-400 mr-1"></i>${exam.category}</div>
-                        <div class="text-xs text-slate-500"><i class="fa-solid fa-users text-slate-400 mr-1"></i>Klass ${exam.klass}</div>
-                    </div>
-
-                    <div class="md:col-span-2">
-                        <span onclick="toggleCodeVisibility('code_${exam.id}')" id="code_${exam.id}" data-code="${exam.code}"
-                            class="cursor-pointer font-mono font-bold bg-slate-100 hover:bg-slate-200 text-indigo-600 px-3 py-1.5 rounded-lg border border-slate-300 text-sm tracking-widest inline-block">
-                            ****
-                        </span>
-                    </div>
-
-                    <div class="md:col-span-5 flex flex-wrap items-center justify-start md:justify-end gap-1.5">
-                        <button onclick="toggleExamActive('${exam.id}')" title="Aktivera/Inaktivera" class="px-2.5 py-1.5 text-xs font-medium rounded-lg border ${exam.active ? 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100' : 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'}">
-                            ${exam.active ? 'Inaktivera' : 'Aktivera'}
-                        </button>
-
-                        <button onclick="goToScreen('${exam.id}')" title="Visa på skärm" class="px-2.5 py-1.5 text-xs font-medium rounded-lg bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100">
-                            <i class="fa-solid fa-desktop mr-1"></i>Skärm
-                        </button>
-
-                        <button onclick="openEditExam('${exam.id}')" title="Redigera" class="px-2.5 py-1.5 text-xs font-medium rounded-lg bg-slate-100 text-slate-700 border border-slate-200 hover:bg-slate-200">
-                            Redigera
-                        </button>
-
-                        <button onclick="goToBoard('${exam.id}')" title="Översikt" class="px-2.5 py-1.5 text-xs font-medium rounded-lg bg-slate-100 text-slate-700 border border-slate-200 hover:bg-slate-200">
-                            Översikt
-                        </button>
-
-                        <button onclick="copyExam('${exam.id}')" title="Kopiera" class="px-2.5 py-1.5 text-xs font-medium rounded-lg bg-slate-100 text-slate-700 border border-slate-200 hover:bg-slate-200">
-                            Kopiera
-                        </button>
-
-                        <button onclick="deleteExam('${exam.id}')" title="Radera uppgift" class="px-2 py-1.5 text-xs font-medium rounded-lg bg-red-50 text-red-600 border border-red-200 hover:bg-red-100">
-                            <i class="fa-solid fa-trash"></i>
-                        </button>
-                    </div>
+            <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                <div class="p-4 bg-slate-50 border-b border-slate-200 font-bold text-xs text-slate-500 uppercase tracking-wider grid grid-cols-12 gap-2 hidden md:grid">
+                    <div class="col-span-3">Titel & Typ</div>
+                    <div class="col-span-2">Ämne & Klass</div>
+                    <div class="col-span-2">Kod</div>
+                    <div class="col-span-5 text-right">Åtgärder</div>
                 </div>
-            `;
-        }
 
-        function toggleCodeVisibility(id) {
-            const el = document.getElementById(id);
-            const code = el.getAttribute('data-code');
-            if (el.innerText === '****') {
-                el.innerText = code;
-            } else {
-                el.innerText = '****';
+                <div class="divide-y divide-slate-200">
+                    ${exams.length === 0 ? '<div class="p-8 text-center text-slate-400">Inga uppgifter hittades. Skapa en ny ovan!</div>' : exams.map(exam => renderAdminExamRow(exam)).join('')}
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+function renderAdminExamRow(exam) {
+    let dotIcons = '';
+    if (exam.type === 'Test') dotIcons = `<span class="text-xs ml-1">(<span class="text-emerald-900">★</span> <span class="text-emerald-500">✓</span> <span class="text-red-500">✕</span>)</span>`;
+    else if (exam.type === 'Entryticket' || exam.type === 'Exitticket') dotIcons = `<span class="text-xs ml-1">(<span class="text-emerald-500">✓</span> <span class="text-red-500">✕</span>)</span>`;
+
+    return `
+        <div class="p-4 hover:bg-slate-50 transition grid grid-cols-1 md:grid-cols-12 gap-3 items-center">
+            <div class="md:col-span-3">
+                <div class="font-bold text-slate-900 flex items-center">
+                    ${exam.title}
+                    ${dotIcons}
+                </div>
+                <span class="inline-block px-2 py-0.5 text-xs font-semibold rounded ${exam.active ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-600'} mt-1">
+                    ${exam.type} • ${exam.active ? 'Aktiv' : 'Inaktiv'}
+                </span>
+            </div>
+
+            <div class="md:col-span-2 text-sm text-slate-600">
+                <div><i class="fa-solid fa-book text-slate-400 mr-1"></i>${exam.category}</div>
+                <div class="text-xs text-slate-500"><i class="fa-solid fa-users text-slate-400 mr-1"></i>Klass ${exam.klass}</div>
+            </div>
+
+            <div class="md:col-span-2">
+                <span onclick="toggleCodeVisibility('code_${exam.id}')" id="code_${exam.id}" data-code="${exam.code}"
+                    class="cursor-pointer font-mono font-bold bg-slate-100 hover:bg-slate-200 text-indigo-600 px-3 py-1.5 rounded-lg border border-slate-300 text-sm tracking-widest inline-block">
+                    ****
+                </span>
+            </div>
+
+            <div class="md:col-span-5 flex flex-wrap items-center justify-start md:justify-end gap-1.5">
+                <button onclick="toggleExamActive('${exam.id}')" title="Aktivera/Inaktivera" class="px-2.5 py-1.5 text-xs font-medium rounded-lg border ${exam.active ? 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100' : 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'}">
+                    ${exam.active ? 'Inaktivera' : 'Aktivera'}
+                </button>
+
+                <button onclick="goToScreen('${exam.id}')" title="Visa på skärm" class="px-2.5 py-1.5 text-xs font-medium rounded-lg bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100">
+                    <i class="fa-solid fa-desktop mr-1"></i>Skärm
+                </button>
+
+                <button onclick="openEditExam('${exam.id}')" title="Redigera" class="px-2.5 py-1.5 text-xs font-medium rounded-lg bg-slate-100 text-slate-700 border border-slate-200 hover:bg-slate-200">
+                    Redigera
+                </button>
+
+                <button onclick="goToBoard('${exam.id}')" title="Översikt" class="px-2.5 py-1.5 text-xs font-medium rounded-lg bg-slate-100 text-slate-700 border border-slate-200 hover:bg-slate-200">
+                    Översikt
+                </button>
+
+                <button onclick="copyExam('${exam.id}')" title="Kopiera" class="px-2.5 py-1.5 text-xs font-medium rounded-lg bg-slate-100 text-slate-700 border border-slate-200 hover:bg-slate-200">
+                    Kopiera
+                </button>
+
+                <button onclick="deleteExam('${exam.id}')" title="Radera uppgift" class="px-2 py-1.5 text-xs font-medium rounded-lg bg-red-50 text-red-600 border border-red-200 hover:bg-red-100">
+                    <i class="fa-solid fa-trash"></i>
+                </button>
+            </div>
+        </div>
+    `;
+}
+
+function toggleCodeVisibility(id) {
+    const el = document.getElementById(id);
+    const code = el.getAttribute('data-code');
+    if (el.innerText === '****') {
+        el.innerText = code;
+    } else {
+        el.innerText = '****';
+    }
+}
+
+async function toggleExamActive(id) {
+    const exam = state.cachedExams.find(e => e.id === id);
+    if (exam) {
+        exam.active = !exam.active;
+        await saveExamToDB(exam);
+        render();
+    }
+}
+
+async function copyExam(id) {
+    const exam = state.cachedExams.find(e => e.id === id);
+    if (exam) {
+        const newExam = JSON.parse(JSON.stringify(exam));
+        newExam.id = 'ex-' + Date.now();
+        newExam.title = newExam.title + ' (Kopia)';
+        newExam.code = Math.floor(1000 + Math.random() * 9000).toString();
+        newExam.submissions = [];
+        await saveExamToDB(newExam);
+        render();
+    }
+}
+
+async function deleteExam(id) {
+    const exam = state.cachedExams.find(e => e.id === id);
+    if (exam) {
+        if (confirm(`Är du helt säker på att du vill radera uppgiften "${exam.title}"? Detta går inte att ångra.`)) {
+            if (db) {
+                await db.from('exams').delete().eq('id', id);
             }
-        }
-
-        function toggleExamActive(id) {
-            const exams = getExams();
-            const exam = exams.find(e => e.id === id);
-            if (exam) {
-                exam.active = !exam.active;
-                saveExams(exams);
-                render();
-            }
-        }
-
-        function copyExam(id) {
-            const exams = getExams();
-            const exam = exams.find(e => e.id === id);
-            if (exam) {
-                const newExam = JSON.parse(JSON.stringify(exam));
-                newExam.id = 'ex-' + Date.now();
-                newExam.title = newExam.title + ' (Kopia)';
-                newExam.code = Math.floor(1000 + Math.random() * 9000).toString();
-                newExam.submissions = [];
-                exams.push(newExam);
-                saveExams(exams);
-                render();
-            }
-        }
-
-        function deleteExam(id) {
-            const exams = getExams();
-            const exam = exams.find(e => e.id === id);
-            if (exam) {
-                if (confirm(`Är du helt säker på att du vill radera uppgiften "${exam.title}"? Detta går inte att ångra.`)) {
-                    const filtered = exams.filter(e => e.id !== id);
-                    saveExams(filtered);
-                    render();
-                }
-            }
-        }
-
-        function goToScreen(id) {
-            state.selectedExamId = id;
-            state.view = 'admin_screen';
             render();
         }
+    }
+}
 
-        function goToBoard(id) {
-            state.selectedExamId = id;
-            state.view = 'admin_board';
+function goToScreen(id) {
+    state.selectedExamId = id;
+    state.view = 'admin_screen';
+    render();
+}
+
+function goToBoard(id) {
+    state.selectedExamId = id;
+    state.view = 'admin_board';
+    render();
+}
+
+// --- VY: VISA PÅ SKÄRM (PROJEKTORVY) ---
+function renderAdminScreen(container, exams) {
+    const exam = exams.find(e => e.id === state.selectedExamId);
+
+    if (!exam) return;
+
+    const subs = exam.submissions || [];
+    const ongoing = subs.filter(s => s.status === 'Pågår' || s.status.includes('Låst'));
+    const submitted = subs.filter(s => s.status === 'Inlämnat');
+
+    container.innerHTML = `
+        <div class="space-y-6">
+            <div class="bg-slate-900 rounded-3xl p-6 sm:p-8 text-white shadow-2xl flex flex-col md:flex-row items-center justify-between gap-6 border-b-4 border-indigo-500">
+                <div>
+                    <span class="inline-block px-3 py-1 bg-indigo-500/30 text-indigo-300 rounded-full text-xs font-bold uppercase tracking-widest mb-2">${exam.type} • ${exam.category} • Klass ${exam.klass}</span>
+                    <h2 class="text-3xl sm:text-4xl font-extrabold tracking-tight">${exam.title}</h2>
+                </div>
+                <div class="bg-indigo-600/40 border-2 border-indigo-400/50 rounded-2xl p-4 text-center min-w-[200px] backdrop-blur-md">
+                    <span class="text-xs font-bold uppercase tracking-wider text-indigo-200 block mb-1">PROVKOD</span>
+                    <span class="text-5xl font-mono font-extrabold tracking-widest text-white">${exam.code}</span>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <!-- KOLUMN 1: PÅGÅR -->
+                <div class="bg-white rounded-2xl border border-slate-200 p-6 shadow-md">
+                    <div class="flex items-center justify-between pb-4 mb-4 border-b border-slate-200">
+                        <h3 class="text-lg font-bold text-slate-800 flex items-center">
+                            <span class="w-3 h-3 bg-amber-500 rounded-full mr-2 animate-pulse"></span>
+                            Pågår (${ongoing.length})
+                        </h3>
+                    </div>
+
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-[500px] overflow-y-auto">
+                        ${ongoing.length === 0 ? '<p class="text-xs text-slate-400 col-span-2 py-4 text-center">Inga elever anslutna än...</p>' : ''}
+                        ${ongoing.map(s => renderScreenStudentCard(s, exam.id)).join('')}
+                    </div>
+                </div>
+
+                <!-- KOLUMN 2: INLÄMNADE -->
+                <div class="bg-white rounded-2xl border border-slate-200 p-6 shadow-md">
+                    <div class="flex items-center justify-between pb-4 mb-4 border-b border-slate-200">
+                        <h3 class="text-lg font-bold text-slate-800 flex items-center">
+                            <span class="w-3 h-3 bg-emerald-500 rounded-full mr-2"></span>
+                            Klara / Inlämnade (${submitted.length})
+                        </h3>
+                    </div>
+
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-[500px] overflow-y-auto">
+                        ${submitted.length === 0 ? '<p class="text-xs text-slate-400 col-span-2 py-4 text-center">Inga inlämnade än...</p>' : ''}
+                        ${submitted.map(s => renderScreenStudentCard(s, exam.id)).join('')}
+                    </div>
+                </div>
+            </div>
+
+            <div class="text-center pt-2">
+                <button onclick="state.view='admin'; render();" class="px-6 py-2.5 bg-slate-200 text-slate-700 font-bold rounded-xl hover:bg-slate-300">
+                    <i class="fa-solid fa-arrow-left mr-2"></i>Tillbaka till Admin
+                </button>
+            </div>
+        </div>
+    `;
+}
+
+function renderScreenStudentCard(sub, examId) {
+    let cardBadge = '';
+    if (sub.warnings === 1 && sub.status !== 'Inlämnat') {
+        cardBadge = `<span class="inline-block w-3.5 h-5 bg-amber-400 border border-amber-600 rounded-sm ml-2" title="Gult kort"></span>`;
+    } else if (sub.warnings >= 2 || sub.status.includes('Låst')) {
+        cardBadge = `<span class="inline-block w-3.5 h-5 bg-red-600 border border-red-800 rounded-sm ml-2" title="Rött kort"></span>`;
+    }
+
+    const isLocked = sub.status.includes('Låst') || sub.warnings >= 2;
+
+    return `
+        <div class="p-3 rounded-xl border ${isLocked ? 'bg-red-50 border-red-300' : 'bg-slate-50 border-slate-200'} flex flex-col justify-between">
+            <div class="flex items-center justify-between">
+                <span class="font-bold text-sm text-slate-800 truncate">${sub.studentName}</span>
+                ${cardBadge}
+            </div>
+
+            ${isLocked && sub.status !== 'Inlämnat' ? `
+                <div class="mt-2 pt-2 border-t border-red-200 flex space-x-2">
+                    <button onclick="unlockStudent('${examId}', '${sub.studentName}')" class="flex-1 py-1 bg-emerald-600 text-white text-xs font-bold rounded hover:bg-emerald-700">
+                        Aktivera?
+                    </button>
+                    <button onclick="forceSubmitStudent('${examId}', '${sub.studentName}')" class="flex-1 py-1 bg-slate-600 text-white text-xs font-bold rounded hover:bg-slate-700">
+                        Avsluta?
+                    </button>
+                </div>
+            ` : ''}
+        </div>
+    `;
+}
+
+async function unlockStudent(examId, studentName) {
+    const exam = state.cachedExams.find(e => e.id === examId);
+    if (exam && exam.submissions) {
+        const sub = exam.submissions.find(s => s.studentName === studentName);
+        if (sub) {
+            sub.status = 'Pågår';
+            sub.warnings = 0;
+            await saveExamToDB(exam);
             render();
         }
+    }
+}
 
-        // --- VY: VISA PÅ SKÄRM (PROJEKTORVY) ---
-        function renderAdminScreen(container) {
-            const exams = getExams();
-            const exam = exams.find(e => e.id === state.selectedExamId);
-
-            if (!exam) return;
-
-            const subs = exam.submissions || [];
-            const ongoing = subs.filter(s => s.status === 'Pågår' || s.status.includes('Låst'));
-            const submitted = subs.filter(s => s.status === 'Inlämnat');
-
-            container.innerHTML = `
-                <div class="space-y-6">
-                    <!-- HEADER PÅ SKÄRM -->
-                    <div class="bg-slate-900 rounded-3xl p-6 sm:p-8 text-white shadow-2xl flex flex-col md:flex-row items-center justify-between gap-6 border-b-4 border-indigo-500">
-                        <div>
-                            <span class="inline-block px-3 py-1 bg-indigo-500/30 text-indigo-300 rounded-full text-xs font-bold uppercase tracking-widest mb-2">${exam.type} • ${exam.category} • Klass ${exam.klass}</span>
-                            <h2 class="text-3xl sm:text-4xl font-extrabold tracking-tight">${exam.title}</h2>
-                        </div>
-                        <div class="bg-indigo-600/40 border-2 border-indigo-400/50 rounded-2xl p-4 text-center min-w-[200px] backdrop-blur-md">
-                            <span class="text-xs font-bold uppercase tracking-wider text-indigo-200 block mb-1">PROVKOD</span>
-                            <span class="text-5xl font-mono font-extrabold tracking-widest text-white">${exam.code}</span>
-                        </div>
-                    </div>
-
-                    <!-- ELEVFOKUSERAD GRID (MAX 24 PLATSER) -->
-                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        <!-- KOLUMN 1: PÅGÅR -->
-                        <div class="bg-white rounded-2xl border border-slate-200 p-6 shadow-md">
-                            <div class="flex items-center justify-between pb-4 mb-4 border-b border-slate-200">
-                                <h3 class="text-lg font-bold text-slate-800 flex items-center">
-                                    <span class="w-3 h-3 bg-amber-500 rounded-full mr-2 animate-pulse"></span>
-                                    Pågår (${ongoing.length})
-                                </h3>
-                            </div>
-
-                            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-[500px] overflow-y-auto">
-                                ${ongoing.length === 0 ? '<p class="text-xs text-slate-400 col-span-2 py-4 text-center">Inga elever anslutna än...</p>' : ''}
-                                ${ongoing.map(s => renderScreenStudentCard(s, exam.id)).join('')}
-                            </div>
-                        </div>
-
-                        <!-- KOLUMN 2: INLÄMNADE -->
-                        <div class="bg-white rounded-2xl border border-slate-200 p-6 shadow-md">
-                            <div class="flex items-center justify-between pb-4 mb-4 border-b border-slate-200">
-                                <h3 class="text-lg font-bold text-slate-800 flex items-center">
-                                    <span class="w-3 h-3 bg-emerald-500 rounded-full mr-2"></span>
-                                    Klara / Inlämnade (${submitted.length})
-                                </h3>
-                            </div>
-
-                            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-[500px] overflow-y-auto">
-                                ${submitted.length === 0 ? '<p class="text-xs text-slate-400 col-span-2 py-4 text-center">Inga inlämnade än...</p>' : ''}
-                                ${submitted.map(s => renderScreenStudentCard(s, exam.id)).join('')}
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="text-center pt-2">
-                        <button onclick="state.view='admin'; render();" class="px-6 py-2.5 bg-slate-200 text-slate-700 font-bold rounded-xl hover:bg-slate-300">
-                            <i class="fa-solid fa-arrow-left mr-2"></i>Tillbaka till Admin
-                        </button>
-                    </div>
-                </div>
-            `;
-        }
-
-        function renderScreenStudentCard(sub, examId) {
-            let cardBadge = '';
-            if (sub.warnings === 1 && sub.status !== 'Inlämnat') {
-                // Gult kort i fotboll
-                cardBadge = `<span class="inline-block w-3.5 h-5 bg-amber-400 border border-amber-600 rounded-sm ml-2" title="Gult kort"></span>`;
-            } else if (sub.warnings >= 2 || sub.status.includes('Låst')) {
-                // Rött kort i fotboll
-                cardBadge = `<span class="inline-block w-3.5 h-5 bg-red-600 border border-red-800 rounded-sm ml-2" title="Rött kort"></span>`;
-            }
-
-            const isLocked = sub.status.includes('Låst') || sub.warnings >= 2;
-
-            return `
-                <div class="p-3 rounded-xl border ${isLocked ? 'bg-red-50 border-red-300' : 'bg-slate-50 border-slate-200'} flex flex-col justify-between">
-                    <div class="flex items-center justify-between">
-                        <span class="font-bold text-sm text-slate-800 truncate">${sub.studentName}</span>
-                        ${cardBadge}
-                    </div>
-
-                    ${isLocked && sub.status !== 'Inlämnat' ? `
-                        <div class="mt-2 pt-2 border-t border-red-200 flex space-x-2">
-                            <button onclick="unlockStudent('${examId}', '${sub.studentName}')" class="flex-1 py-1 bg-emerald-600 text-white text-xs font-bold rounded hover:bg-emerald-700">
-                                Aktivera?
-                            </button>
-                            <button onclick="forceSubmitStudent('${examId}', '${sub.studentName}')" class="flex-1 py-1 bg-slate-600 text-white text-xs font-bold rounded hover:bg-slate-700">
-                                Avsluta?
-                            </button>
-                        </div>
-                    ` : ''}
-                </div>
-            `;
-        }
-
-        function unlockStudent(examId, studentName) {
-            const exams = getExams();
-            const exam = exams.find(e => e.id === examId);
-            if (exam) {
-                const sub = exam.submissions.find(s => s.studentName === studentName);
-                if (sub) {
-                    sub.status = 'Pågår';
-                    sub.warnings = 0;
-                    saveExams(exams);
-                    render();
-                }
-            }
-        }
-
-        function forceSubmitStudent(examId, studentName) {
-            const exams = getExams();
-            const exam = exams.find(e => e.id === examId);
-            if (exam) {
-                const sub = exam.submissions.find(s => s.studentName === studentName);
-                if (sub) {
-                    sub.status = 'Inlämnat';
-                    saveExams(exams);
-                    render();
-                }
-            }
-        }
-
-        // --- VY: MATRISÖVERSIKT (ADMIN_BOARD) ---
-        async function renderAdminBoard(container) {
-            const exams = await getExams();
-            const exam = exams.find(e => e.id === state.selectedExamId);
-
-            if (!exam) return;
-
-            const subs = exam.submissions || [];
-
-            container.innerHTML = `
-                <div class="space-y-6">
-                    <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex items-center justify-between">
-                        <div>
-                            <h2 class="text-2xl font-bold text-slate-900">${exam.title} - Översikt</h2>
-                            <p class="text-xs text-slate-500 mt-1">Klass ${exam.klass} • ${exam.type}</p>
-                        </div>
-                        <button onclick="state.view='admin'; render();" class="px-4 py-2 bg-slate-100 text-slate-700 font-semibold rounded-xl hover:bg-slate-200 text-sm">
-                            Tillbaka
-                        </button>
-                    </div>
-
-                    <!-- MATRISTABELL -->
-                    <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-                        <table class="w-full text-left border-collapse">
-                            <thead>
-                                <tr class="bg-slate-50 border-b border-slate-200 text-xs font-bold text-slate-500 uppercase tracking-wider">
-                                    <th class="p-4">Elev</th>
-                                    <th class="p-4">Status</th>
-                                    <th class="p-4">Resultat / Pluppar</th>
-                                    <th class="p-4 text-right">Åtgärd</th>
-                                </tr>
-                            </thead>
-                            <tbody class="divide-y divide-slate-200 text-sm">
-                                ${subs.length === 0 ? '<tr><td colspan="4" class="p-6 text-center text-slate-400">Inga elever har påbörjat ännu.</td></tr>' : ''}
-                                ${subs.map(s => `
-                                    <tr class="hover:bg-slate-50">
-                                        <td class="p-4 font-bold text-slate-900">${s.studentName}</td>
-                                        <td class="p-4">
-                                            <span class="px-2.5 py-1 text-xs font-semibold rounded-full ${s.status === 'Inlämnat' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}">
-                                                ${s.status}
-                                            </span>
-                                        </td>
-                                        <td class="p-4">
-                                            <div class="flex space-x-1.5">
-                                                ${(s.feedback || []).map(f => renderDotBadge(f.statusDot)).join('')}
-                                            </div>
-                                        </td>
-                                        <td class="p-4 text-right">
-                                            <button onclick="openReviewModal('${s.id}')" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs rounded-lg shadow-sm">
-                                                Granska
-                                            </button>
-                                        </td>
-                                    </tr>
-                                `).join('')}
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-            `;
-        }
-
-        function openReviewModal(subId) {
-            const exams = getExams();
-            const exam = exams.find(e => e.id === state.selectedExamId);
-            if (!exam) return;
-
-            const sub = exam.submissions.find(s => s.id === subId);
-            if (!sub) return;
-
-            const content = document.getElementById('reviewModalContent');
-            content.innerHTML = `
-                <div class="space-y-6">
-                    <div>
-                        <span class="text-xs font-bold text-indigo-600 uppercase tracking-wider">Elevresultat</span>
-                        <h2 class="text-2xl font-bold text-slate-900">${sub.studentName}</h2>
-                        <p class="text-xs text-slate-500">${exam.title} • Inlämnad: ${sub.submittedAt || 'Pågår'}</p>
-                    </div>
-
-                    <div class="space-y-4">
-                        ${exam.questions.map((q, idx) => {
-                            const ans = sub.answers ? sub.answers[q.id] : 'Inget svar';
-                            const fb = (sub.feedback || []).find(f => f.questionId === q.id) || { statusDot: 'lightgreen', text: '' };
-
-                            return `
-                                <div class="p-4 rounded-xl border border-slate-200 bg-slate-50 space-y-2">
-                                    <div class="flex items-center justify-between">
-                                        <span class="font-bold text-xs text-slate-500">Fråga / Begrepp ${idx + 1}</span>${renderDotBadge(fb.statusDot)}
-                                    </div>
-                                    <h4 class="font-bold text-slate-800 text-sm">${q.text || q.concept}</h4>
-                                    <div class="p-3 bg-white rounded-lg border border-slate-200 text-xs font-mono text-slate-700">
-                                        ${Array.isArray(ans) ? ans.map(i => q.options[i]).join(', ') : ans}
-                                    </div>
-                                    <div class="text-xs text-indigo-700 font-medium pt-1">
-                                        <i class="fa-solid fa-comment-dots mr-1"></i>Respons: ${fb.text}
-                                    </div>
-                                </div>
-                            `;
-                        }).join('')}
-                    </div>
-                </div>
-            `;
-
-            document.getElementById('reviewModal').classList.remove('hidden');
-        }
-
-        function closeReviewModal() {
-            document.getElementById('reviewModal').classList.add('hidden');
-        }
-
-        // --- VY: SKAPA / REDIGERA UPPGIFT (ADMIN_EDIT) ---
-        function openCreateExamModal() {
-            state.editingExam = {
-                id: 'ex-' + Date.now(),
-                title: '',
-                type: 'Test',
-                category: 'Historia',
-                klass: '8B',
-                code: Math.floor(1000 + Math.random() * 9000).toString(),
-                active: true,
-                questions: []
-            };
-            state.view = 'admin_edit';
+async function forceSubmitStudent(examId, studentName) {
+    const exam = state.cachedExams.find(e => e.id === examId);
+    if (exam && exam.submissions) {
+        const sub = exam.submissions.find(s => s.studentName === studentName);
+        if (sub) {
+            sub.status = 'Inlämnat';
+            await saveExamToDB(exam);
             render();
         }
+    }
+}
 
- async function openEditExam(id) {
-    const exams = await getExams();
-    const exam = exams.find(e => e.id === id);
+// --- VY: MATRISÖVERSIKT (ADMIN_BOARD) ---
+function renderAdminBoard(container, exams) {
+    const exam = exams.find(e => e.id === state.selectedExamId);
+
+    if (!exam) return;
+
+    const subs = exam.submissions || [];
+
+    container.innerHTML = `
+        <div class="space-y-6">
+            <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex items-center justify-between">
+                <div>
+                    <h2 class="text-2xl font-bold text-slate-900">${exam.title} - Översikt</h2>
+                    <p class="text-xs text-slate-500 mt-1">Klass ${exam.klass} • ${exam.type}</p>
+                </div>
+                <button onclick="state.view='admin'; render();" class="px-4 py-2 bg-slate-100 text-slate-700 font-semibold rounded-xl hover:bg-slate-200 text-sm">
+                    Tillbaka
+                </button>
+            </div>
+
+            <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                <table class="w-full text-left border-collapse">
+                    <thead>
+                        <tr class="bg-slate-50 border-b border-slate-200 text-xs font-bold text-slate-500 uppercase tracking-wider">
+                            <th class="p-4">Elev</th>
+                            <th class="p-4">Status</th>
+                            <th class="p-4">Resultat / Pluppar</th>
+                            <th class="p-4 text-right">Åtgärd</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-slate-200 text-sm">
+                        ${subs.length === 0 ? '<tr><td colspan="4" class="p-6 text-center text-slate-400">Inga elever har påbörjat ännu.</td></tr>' : ''}
+                        ${subs.map(s => `
+                            <tr class="hover:bg-slate-50">
+                                <td class="p-4 font-bold text-slate-900">${s.studentName}</td>
+                                <td class="p-4">
+                                    <span class="px-2.5 py-1 text-xs font-semibold rounded-full ${s.status === 'Inlämnat' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}">
+                                        ${s.status}
+                                    </span>
+                                </td>
+                                <td class="p-4">
+                                    <div class="flex space-x-1.5">
+                                        ${(s.feedback || []).map(f => renderDotBadge(f.statusDot)).join('')}
+                                    </div>
+                                </td>
+                                <td class="p-4 text-right">
+                                    <button onclick="openReviewModal('${s.id}')" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs rounded-lg shadow-sm">
+                                        Granska
+                                    </button>
+                                </td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    `;
+}
+
+function openReviewModal(subId) {
+    const exam = state.cachedExams.find(e => e.id === state.selectedExamId);
+    if (!exam || !exam.submissions) return;
+
+    const sub = exam.submissions.find(s => s.id === subId);
+    if (!sub) return;
+
+    const content = document.getElementById('reviewModalContent');
+    content.innerHTML = `
+        <div class="space-y-6">
+            <div>
+                <span class="text-xs font-bold text-indigo-600 uppercase tracking-wider">Elevresultat</span>
+                <h2 class="text-2xl font-bold text-slate-900">${sub.studentName}</h2>
+                <p class="text-xs text-slate-500">${exam.title} • Inlämnad: ${sub.submittedAt || 'Pågår'}</p>
+            </div>
+
+            <div class="space-y-4">
+                ${exam.questions.map((q, idx) => {
+                    const ans = sub.answers ? sub.answers[q.id] : 'Inget svar';
+                    const fb = (sub.feedback || []).find(f => f.questionId === q.id) || { statusDot: 'lightgreen', text: '' };
+
+                    return `
+                        <div class="p-4 rounded-xl border border-slate-200 bg-slate-50 space-y-2">
+                            <div class="flex items-center justify-between">
+                                <span class="font-bold text-xs text-slate-500">Fråga / Begrepp ${idx + 1}</span>${renderDotBadge(fb.statusDot)}
+                            </div>
+                            <h4 class="font-bold text-slate-800 text-sm">${q.text || q.concept}</h4>
+                            <div class="p-3 bg-white rounded-lg border border-slate-200 text-xs font-mono text-slate-700">
+                                ${Array.isArray(ans) ? ans.map(i => q.options ? q.options[i] : i).join(', ') : ans}
+                            </div>
+                            <div class="text-xs text-indigo-700 font-medium pt-1">
+                                <i class="fa-solid fa-comment-dots mr-1"></i>Respons: ${fb.text}
+                            </div>
+                        </div>
+                    `;
+                }).join('')}
+            </div>
+        </div>
+    `;
+
+    document.getElementById('reviewModal').classList.remove('hidden');
+}
+
+function closeReviewModal() {
+    document.getElementById('reviewModal').classList.add('hidden');
+}
+
+// --- VY: SKAPA / REDIGERA UPPGIFT (ADMIN_EDIT) ---
+function openCreateExamModal() {
+    state.editingExam = {
+        id: 'ex-' + Date.now(),
+        title: '',
+        type: 'Test',
+        category: 'Historia',
+        klass: '8B',
+        code: Math.floor(1000 + Math.random() * 9000).toString(),
+        active: true,
+        questions: []
+    };
+    state.view = 'admin_edit';
+    render();
+}
+
+function openEditExam(id) {
+    const exam = state.cachedExams.find(e => e.id === id);
     if (exam) {
         state.editingExam = JSON.parse(JSON.stringify(exam));
         state.view = 'admin_edit';
         render();
     }
-} 
+}
 
 function renderAdminEdit(container) {
     const exam = state.editingExam || {};
     const examType = exam.type || 'Test';
     const isEntryOrExit = examType === 'Entryticket' || examType === 'Exitticket';        
 
-            container.innerHTML = `
-                <div class="max-w-3xl mx-auto bg-white rounded-2xl border border-slate-200 shadow-xl p-6 sm:p-8 space-y-6">
-                    <div class="flex items-center justify-between border-b border-slate-200 pb-4">
-                        <h2 class="text-2xl font-bold text-slate-900">${exam.title ? 'Redigera uppgift' : 'Skapa Ny Uppgift'}</h2>
-                        <button onclick="state.view='admin'; render();" class="text-sm font-semibold text-slate-500 hover:text-slate-800">Avbryt</button>
+    container.innerHTML = `
+        <div class="max-w-3xl mx-auto bg-white rounded-2xl border border-slate-200 shadow-xl p-6 sm:p-8 space-y-6">
+            <div class="flex items-center justify-between border-b border-slate-200 pb-4">
+                <h2 class="text-2xl font-bold text-slate-900">${exam.title ? 'Redigera uppgift' : 'Skapa Ny Uppgift'}</h2>
+                <button onclick="state.view='admin'; render();" class="text-sm font-semibold text-slate-500 hover:text-slate-800">Avbryt</button>
+            </div>
+
+            <form onsubmit="saveEditedExam(event)" class="space-y-5">
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Typ av uppgift</label>
+                        <select id="editType" onchange="changeExamType(this.value)" class="w-full px-4 py-2.5 rounded-xl border border-slate-300 text-sm focus:ring-2 focus:ring-indigo-500 bg-white">
+                            <option value="Test" ${exam.type === 'Test' ? 'selected' : ''}>Test (🟢 🟢 🔴)</option>
+                            <option value="Entryticket" ${exam.type === 'Entryticket' ? 'selected' : ''}>Entryticket (🟢 🔴)</option>
+                            <option value="Exitticket" ${exam.type === 'Exitticket' ? 'selected' : ''}>Exitticket (🟢 🔴)</option>
+                            <option value="Träning" ${exam.type === 'Träning' ? 'selected' : ''}>Träning just nu</option>
+                        </select>
                     </div>
 
-                    <form onsubmit="saveEditedExam(event)" class="space-y-5">
-                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                            <div>
-                                <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Typ av uppgift</label>
-                                <select id="editType" onchange="changeExamType(this.value)" class="w-full px-4 py-2.5 rounded-xl border border-slate-300 text-sm focus:ring-2 focus:ring-indigo-500 bg-white">
-                                    <option value="Test" ${exam.type === 'Test' ? 'selected' : ''}>Test (🟢 🟢 🔴)</option>
-                                    <option value="Entryticket" ${exam.type === 'Entryticket' ? 'selected' : ''}>Entryticket (🟢 🔴)</option>
-                                    <option value="Exitticket" ${exam.type === 'Exitticket' ? 'selected' : ''}>Exitticket (🟢 🔴)</option>
-                                    <option value="Träning" ${exam.type === 'Träning' ? 'selected' : ''}>Träning just nu</option>
-                                </select>
-                            </div>
-
-                            <div>
-                                <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Ämne</label>
-                                <select id="editCategory" class="w-full px-4 py-2.5 rounded-xl border border-slate-300 text-sm focus:ring-2 focus:ring-indigo-500 bg-white">
-                                    <option value="Historia" ${exam.category === 'Historia' ? 'selected' : ''}>Historia</option>
-                                    <option value="Geografi" ${exam.category === 'Geografi' ? 'selected' : ''}>Geografi</option>
-                                    <option value="Religion" ${exam.category === 'Religion' ? 'selected' : ''}>Religion</option>
-                                    <option value="Samhällskunskap" ${exam.category === 'Samhällskunskap' ? 'selected' : ''}>Samhällskunskap</option>
-                                </select>
-                            </div>
-                        </div>
-
-                        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                            <div class="sm:col-span-2">
-                                <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Titel på uppgift</label>
-                                <input type="text" id="editTitle" required value="${exam.title}" placeholder="t.ex. Industriella Revolutionen"
-                                    class="w-full px-4 py-2.5 rounded-xl border border-slate-300 text-sm focus:ring-2 focus:ring-indigo-500">
-                            </div>
-                            <div>
-                                <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Klass</label>
-                                <input type="text" id="editKlass" required value="${exam.klass}" placeholder="8B"
-                                    class="w-full px-4 py-2.5 rounded-xl border border-slate-300 text-sm focus:ring-2 focus:ring-indigo-500">
-                            </div>
-                        </div>
-
-                        <div>
-                            <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Provkod (4-siffrig)</label>
-                            <input type="text" id="editCode" maxlength="4" required value="${exam.code}"
-                                class="w-full px-4 py-2.5 rounded-xl border border-slate-300 text-sm font-mono tracking-widest focus:ring-2 focus:ring-indigo-500">
-                        </div>
-
-                        <!-- FRÅGOR SEKTION -->
-                        <div class="border-t border-slate-200 pt-5 space-y-4">
-                            <div class="flex items-center justify-between">
-                                <h3 class="font-bold text-slate-900">${isEntryOrExit ? 'Begrepp som ska förklaras' : 'Frågor'}</h3>
-                                <div class="space-x-2">
-                                    ${isEntryOrExit ? `
-                                        <button type="button" onclick="addConceptQuestion()" class="px-3 py-1.5 bg-indigo-50 text-indigo-600 font-bold text-xs rounded-lg hover:bg-indigo-100">+ Lägg till begrepp</button>
-                                    ` : `
-                                        <button type="button" onclick="addTextQuestion()" class="px-3 py-1.5 bg-indigo-50 text-indigo-600 font-bold text-xs rounded-lg hover:bg-indigo-100">+ Öppen textfråga</button>
-                                        <button type="button" onclick="addMCQuestion()" class="px-3 py-1.5 bg-indigo-50 text-indigo-600 font-bold text-xs rounded-lg hover:bg-indigo-100">+ Flervalsfråga</button>
-                                    `}
-                                </div>
-                            </div>
-
-                            <div class="space-y-4">
-                                ${exam.questions.map((q, idx) => renderEditQuestionCard(q, idx, isEntryOrExit)).join('')}
-                            </div>
-                        </div>
-
-                        <button type="submit" class="w-full py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-lg transition">
-                            Spara Uppgift
-                        </button>
-                    </form>
+                    <div>
+                        <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Ämne</label>
+                        <select id="editCategory" class="w-full px-4 py-2.5 rounded-xl border border-slate-300 text-sm focus:ring-2 focus:ring-indigo-500 bg-white">
+                            <option value="Historia" ${exam.category === 'Historia' ? 'selected' : ''}>Historia</option>
+                            <option value="Geografi" ${exam.category === 'Geografi' ? 'selected' : ''}>Geografi</option>
+                            <option value="Religion" ${exam.category === 'Religion' ? 'selected' : ''}>Religion</option>
+                            <option value="Samhällskunskap" ${exam.category === 'Samhällskunskap' ? 'selected' : ''}>Samhällskunskap</option>
+                        </select>
+                    </div>
                 </div>
-            `;
-        }
 
-        function changeExamType(newType) {
-            state.editingExam.type = newType;
-            if (newType === 'Entryticket' || newType === 'Exitticket') {
-                state.editingExam.title = 'Minns du?';
-            }
-            render();
-        }
+                <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <div class="sm:col-span-2">
+                        <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Titel på uppgift</label>
+                        <input type="text" id="editTitle" required value="${exam.title || ''}" placeholder="t.ex. Industriella Revolutionen"
+                            class="w-full px-4 py-2.5 rounded-xl border border-slate-300 text-sm focus:ring-2 focus:ring-indigo-500">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Klass</label>
+                        <input type="text" id="editKlass" required value="${exam.klass || ''}" placeholder="8B"
+                            class="w-full px-4 py-2.5 rounded-xl border border-slate-300 text-sm focus:ring-2 focus:ring-indigo-500">
+                    </div>
+                </div>
 
-        function renderEditQuestionCard(q, idx, isEntryOrExit) {
-            if (isEntryOrExit) {
-                return `
-                    <div class="p-4 rounded-xl border border-slate-200 bg-slate-50 relative space-y-3">
-                        <button type="button" onclick="removeQuestion(${idx})" class="absolute top-3 right-3 text-red-500 hover:text-red-700 text-sm">
-                            <i class="fa-solid fa-trash"></i>
-                        </button>
-                        <span class="font-bold text-xs text-indigo-600">Begrepp ${idx + 1}</span>
-                        <div>
-                            <label class="block text-xs font-bold text-slate-700 mb-1">Begrepp</label>
-                            <input type="text" value="${q.concept || ''}" onchange="state.editingExam.questions[${idx}].concept = this.value" placeholder="t.ex. Jesus"
-                                class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm">
-                        </div>
-                        <div>
-                            <label class="block text-xs font-bold text-slate-700 mb-1">Förklaring (Facit)</label>
-                            <input type="text" value="${q.criteria || ''}" onchange="state.editingExam.questions[${idx}].criteria = this.value" placeholder="Lämna tom för AI-hjälp"
-                                class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm">
+                <div>
+                    <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Provkod (4-siffrig)</label>
+                    <input type="text" id="editCode" maxlength="4" required value="${exam.code || ''}"
+                        class="w-full px-4 py-2.5 rounded-xl border border-slate-300 text-sm font-mono tracking-widest focus:ring-2 focus:ring-indigo-500">
+                </div>
+
+                <!-- FRÅGOR SEKTION -->
+                <div class="border-t border-slate-200 pt-5 space-y-4">
+                    <div class="flex items-center justify-between">
+                        <h3 class="font-bold text-slate-900">${isEntryOrExit ? 'Begrepp som ska förklaras' : 'Frågor'}</h3>
+                        <div class="space-x-2">
+                            ${isEntryOrExit ? `
+                                <button type="button" onclick="addConceptQuestion()" class="px-3 py-1.5 bg-indigo-50 text-indigo-600 font-bold text-xs rounded-lg hover:bg-indigo-100">+ Lägg till begrepp</button>
+                            ` : `
+                                <button type="button" onclick="addTextQuestion()" class="px-3 py-1.5 bg-indigo-50 text-indigo-600 font-bold text-xs rounded-lg hover:bg-indigo-100">+ Öppen textfråga</button>
+                                <button type="button" onclick="addMCQuestion()" class="px-3 py-1.5 bg-indigo-50 text-indigo-600 font-bold text-xs rounded-lg hover:bg-indigo-100">+ Flervalsfråga</button>
+                            `}
                         </div>
                     </div>
-                `;
-            } else if (q.type === 'mc') {
-                return `
-                    <div class="p-4 rounded-xl border border-slate-200 bg-slate-50 relative space-y-3">
-                        <button type="button" onclick="removeQuestion(${idx})" class="absolute top-3 right-3 text-red-500 hover:text-red-700 text-sm">
-                            <i class="fa-solid fa-trash"></i>
-                        </button>
-                        <span class="font-bold text-xs text-indigo-600">Flervalsfråga ${idx + 1}</span>
-                        <div>
-                            <label class="block text-xs font-bold text-slate-700 mb-1">Frågan</label>
-                            <input type="text" value="${q.text || ''}" onchange="state.editingExam.questions[${idx}].text = this.value" placeholder="Skriv frågan här..."
-                                class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm">
-                        </div>
-                        <div>
-                            <label class="block text-xs font-bold text-slate-700 mb-1">Svarsalternativ (Bocka för alla korrekta svar)</label>
-                            <div class="space-y-2">
-                                ${q.options.map((opt, oIdx) => `
-                                    <div class="flex items-center space-x-2">
-                                        <input type="checkbox" ${q.correctOptions.includes(oIdx) ? 'checked' : ''} onchange="toggleMCCorrect(${idx},${oIdx})" class="w-4 h-4 text-indigo-600">
-                                        <input type="text" value="${opt}" onchange="state.editingExam.questions[${idx}].options[${oIdx}] = this.value"
-                                            class="flex-1 px-3 py-1.5 rounded-lg border border-slate-300 text-sm">
-                                        <button type="button" onclick="removeMCOption(${idx},${oIdx})" class="text-red-400 hover:text-red-600 p-1"><i class="fa-solid fa-trash"></i></button>
-                                    </div>
-                                `).join('')}
+
+                    <div class="space-y-4">
+                        ${(exam.questions || []).map((q, idx) => renderEditQuestionCard(q, idx, isEntryOrExit)).join('')}
+                    </div>
+                </div>
+
+                <button type="submit" class="w-full py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-lg transition">
+                    Spara Uppgift
+                </button>
+            </form>
+        </div>
+    `;
+}
+
+function changeExamType(newType) {
+    state.editingExam.type = newType;
+    if (newType === 'Entryticket' || newType === 'Exitticket') {
+        state.editingExam.title = 'Minns du?';
+    }
+    render();
+}
+
+function renderEditQuestionCard(q, idx, isEntryOrExit) {
+    if (isEntryOrExit) {
+        return `
+            <div class="p-4 rounded-xl border border-slate-200 bg-slate-50 relative space-y-3">
+                <button type="button" onclick="removeQuestion(${idx})" class="absolute top-3 right-3 text-red-500 hover:text-red-700 text-sm">
+                    <i class="fa-solid fa-trash"></i>
+                </button>
+                <span class="font-bold text-xs text-indigo-600">Begrepp ${idx + 1}</span>
+                <div>
+                    <label class="block text-xs font-bold text-slate-700 mb-1">Begrepp</label>
+                    <input type="text" value="${q.concept || ''}" onchange="state.editingExam.questions[${idx}].concept = this.value" placeholder="t.ex. Jesus"
+                        class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm">
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-slate-700 mb-1">Förklaring (Facit)</label>
+                    <input type="text" value="${q.criteria || ''}" onchange="state.editingExam.questions[${idx}].criteria = this.value" placeholder="Lämna tom för AI-hjälp"
+                        class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm">
+                </div>
+            </div>
+        `;
+    } else if (q.type === 'mc') {
+        return `
+            <div class="p-4 rounded-xl border border-slate-200 bg-slate-50 relative space-y-3">
+                <button type="button" onclick="removeQuestion(${idx})" class="absolute top-3 right-3 text-red-500 hover:text-red-700 text-sm">
+                    <i class="fa-solid fa-trash"></i>
+                </button>
+                <span class="font-bold text-xs text-indigo-600">Flervalsfråga ${idx + 1}</span>
+                <div>
+                    <label class="block text-xs font-bold text-slate-700 mb-1">Frågan</label>
+                    <input type="text" value="${q.text || ''}" onchange="state.editingExam.questions[${idx}].text = this.value" placeholder="Skriv frågan här..."
+                        class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm">
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-slate-700 mb-1">Svarsalternativ (Bocka för alla korrekta svar)</label>
+                    <div class="space-y-2">
+                        ${q.options.map((opt, oIdx) => `
+                            <div class="flex items-center space-x-2">
+                                <input type="checkbox" ${(q.correctOptions || []).includes(oIdx) ? 'checked' : ''} onchange="toggleMCCorrect(${idx},${oIdx})" class="w-4 h-4 text-indigo-600">
+                                <input type="text" value="${opt}" onchange="state.editingExam.questions[${idx}].options[${oIdx}] = this.value"
+                                    class="flex-1 px-3 py-1.5 rounded-lg border border-slate-300 text-sm">
+                                <button type="button" onclick="removeMCOption(${idx},${oIdx})" class="text-red-400 hover:text-red-600 p-1"><i class="fa-solid fa-trash"></i></button>
                             </div>
-                            <button type="button" onclick="addMCOption(${idx})" class="mt-2 text-xs text-indigo-600 font-bold hover:underline">+ Lägg till svarsalternativ</button>
-                        </div>
+                        `).join('')}
                     </div>
-                `;
-            } else {
-                return `
-                    <div class="p-4 rounded-xl border border-slate-200 bg-slate-50 relative space-y-3">
-                        <button type="button" onclick="removeQuestion(${idx})" class="absolute top-3 right-3 text-red-500 hover:text-red-700 text-sm">
-                            <i class="fa-solid fa-trash"></i>
-                        </button>
-                        <span class="font-bold text-xs text-indigo-600">Öppen textfråga ${idx + 1}</span>
-                        <div>
-                            <label class="block text-xs font-bold text-slate-700 mb-1">Frågan</label>
-                            <input type="text" value="${q.text || ''}" onchange="state.editingExam.questions[${idx}].text = this.value" placeholder="Skriv frågan här..."
-                                class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm">
-                        </div>
-                        <div>
-                            <label class="block text-xs font-bold text-slate-700 mb-1">Förslag på svar och respons</label>
-                            <textarea onchange="state.editingExam.questions[${idx}].criteria = this.value" rows="2" placeholder="Svarskriterier / förberedd respons..."
-                                class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm">${q.criteria || ''}</textarea>
-                        </div>
-                    </div>
-                `;
-            }
-        }
+                    <button type="button" onclick="addMCOption(${idx})" class="mt-2 text-xs text-indigo-600 font-bold hover:underline">+ Lägg till svarsalternativ</button>
+                </div>
+            </div>
+        `;
+    } else {
+        return `
+            <div class="p-4 rounded-xl border border-slate-200 bg-slate-50 relative space-y-3">
+                <button type="button" onclick="removeQuestion(${idx})" class="absolute top-3 right-3 text-red-500 hover:text-red-700 text-sm">
+                    <i class="fa-solid fa-trash"></i>
+                </button>
+                <span class="font-bold text-xs text-indigo-600">Öppen textfråga ${idx + 1}</span>
+                <div>
+                    <label class="block text-xs font-bold text-slate-700 mb-1">Frågan</label>
+                    <input type="text" value="${q.text || ''}" onchange="state.editingExam.questions[${idx}].text = this.value" placeholder="Skriv frågan här..."
+                        class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm">
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-slate-700 mb-1">Förslag på svar och respons</label>
+                    <textarea onchange="state.editingExam.questions[${idx}].criteria = this.value" rows="2" placeholder="Svarskriterier / förberedd respons..."
+                        class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm">${q.criteria || ''}</textarea>
+                </div>
+            </div>
+        `;
+    }
+}
 
-        function addConceptQuestion() {
-            state.editingExam.questions.push({ id: Date.now(), type: 'concept', concept: '', criteria: '' });
-            render();
-        }
+function addConceptQuestion() {
+    if (!state.editingExam.questions) state.editingExam.questions = [];
+    state.editingExam.questions.push({ id: Date.now(), type: 'concept', concept: '', criteria: '' });
+    render();
+}
 
-        function addTextQuestion() {
-            state.editingExam.questions.push({ id: Date.now(), type: 'text', text: '', criteria: '' });
-            render();
-        }
+function addTextQuestion() {
+    if (!state.editingExam.questions) state.editingExam.questions = [];
+    state.editingExam.questions.push({ id: Date.now(), type: 'text', text: '', criteria: '' });
+    render();
+}
 
-        function addMCQuestion() {
-            state.editingExam.questions.push({
-                id: Date.now(),
-                type: 'mc',
-                text: '',
-                options: ['Rätt svar', 'Fel svar 1', 'Fel svar 2', 'Fel svar 3'],
-                correctOptions: [0],
-                criteria: ''
-            });
-            render();
-        }
+function addMCQuestion() {
+    if (!state.editingExam.questions) state.editingExam.questions = [];
+    state.editingExam.questions.push({
+        id: Date.now(),
+        type: 'mc',
+        text: '',
+        options: ['Rätt svar', 'Fel svar 1', 'Fel svar 2', 'Fel svar 3'],
+        correctOptions: [0],
+        criteria: ''
+    });
+    render();
+}
 
-        function removeQuestion(idx) {
-            state.editingExam.questions.splice(idx, 1);
-            render();
-        }
+function removeQuestion(idx) {
+    state.editingExam.questions.splice(idx, 1);
+    render();
+}
 
-        function addMCOption(qIdx) {
-            state.editingExam.questions[qIdx].options.push('Nytt alternativ');
-            render();
-        }
+function addMCOption(qIdx) {
+    state.editingExam.questions[qIdx].options.push('Nytt alternativ');
+    render();
+}
 
-        function removeMCOption(qIdx, oIdx) {
-            state.editingExam.questions[qIdx].options.splice(oIdx, 1);
-            state.editingExam.questions[qIdx].correctOptions = state.editingExam.questions[qIdx].correctOptions.filter(i => i !== oIdx);
-            render();
-        }
+function removeMCOption(qIdx, oIdx) {
+    state.editingExam.questions[qIdx].options.splice(oIdx, 1);
+    state.editingExam.questions[qIdx].correctOptions = (state.editingExam.questions[qIdx].correctOptions || []).filter(i => i !== oIdx);
+    render();
+}
 
-        function toggleMCCorrect(qIdx, oIdx) {
-            const arr = state.editingExam.questions[qIdx].correctOptions;
-            if (arr.includes(oIdx)) {
-                state.editingExam.questions[qIdx].correctOptions = arr.filter(i => i !== oIdx);
-            } else {
-                arr.push(oIdx);
-            }
-        }
+function toggleMCCorrect(qIdx, oIdx) {
+    if (!state.editingExam.questions[qIdx].correctOptions) state.editingExam.questions[qIdx].correctOptions = [];
+    const arr = state.editingExam.questions[qIdx].correctOptions;
+    if (arr.includes(oIdx)) {
+        state.editingExam.questions[qIdx].correctOptions = arr.filter(i => i !== oIdx);
+    } else {
+        arr.push(oIdx);
+    }
+}
 
-        async function saveEditedExam(e) {
-            e.preventDefault();
-            const exam = state.editingExam;
-            exam.type = document.getElementById('editType').value;
-            exam.category = document.getElementById('editCategory').value;
-            exam.title = document.getElementById('editTitle').value.trim();
-            exam.klass = document.getElementById('editKlass').value.trim();
-            exam.code = document.getElementById('editCode').value.trim();
+async function saveEditedExam(e) {
+    e.preventDefault();
+    const exam = state.editingExam;
+    exam.type = document.getElementById('editType').value;
+    exam.category = document.getElementById('editCategory').value;
+    exam.title = document.getElementById('editTitle').value.trim();
+    exam.klass = document.getElementById('editKlass').value.trim();
+    exam.code = document.getElementById('editCode').value.trim();
 
-            const exams = await getExams();
-            const idx = exams.findIndex(ex => ex.id === exam.id);
-            if (idx !== -1) {
-                exams[idx] = exam;
-            } else {
-                exams.push(exam);
-            }
-            await saveExamToDB(exam);
-            state.view = 'admin';
-            render();
-        }
+    await saveExamToDB(exam);
+    state.view = 'admin';
+    render();
+}
 
-        // Starta applikationen
-        render();
-    </script>
+// Starta applikationen när DOM laddats
+document.addEventListener('DOMContentLoaded', () => {
+    render();
+});
+render();
+</script>
 </body>
 </html>
