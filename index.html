@@ -1001,19 +1001,20 @@ function renderAdmin(container, exams) {
             render();
         }
 
-        function openEditExam(id) {
-            const exams = getExams();
-            const exam = exams.find(e => e.id === id);
-            if (exam) {
-                state.editingExam = JSON.parse(JSON.stringify(exam));
-                state.view = 'admin_edit';
-                render();
-            }
-        }
+ async function openEditExam(id) {
+    const exams = await getExams();
+    const exam = exams.find(e => e.id === id);
+    if (exam) {
+        state.editingExam = JSON.parse(JSON.stringify(exam));
+        state.view = 'admin_edit';
+        render();
+    }
+} 
 
-        function renderAdminEdit(container) {
-            const exam = state.editingExam;
-            const isEntryOrExit = exam.type === 'Entryticket' || exam.type === 'Exitticket';
+function renderAdminEdit(container) {
+    const exam = state.editingExam || {};
+    const examType = exam.type || 'Test';
+    const isEntryOrExit = examType === 'Entryticket' || examType === 'Exitticket';        
 
             container.innerHTML = `
                 <div class="max-w-3xl mx-auto bg-white rounded-2xl border border-slate-200 shadow-xl p-6 sm:p-8 space-y-6">
