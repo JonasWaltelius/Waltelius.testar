@@ -74,28 +74,39 @@ function validateStudentName(name) {
 }
 
 async function getExams() {
-    if (!db) return localExamsFallback;
-    try {
-        const { data, error } = await db.from('exams').select('*');
-        if (error || !data || data.length === 0) return localExamsFallback;
-        data.sort((a, b) => {
-            const tA = parseInt((a.id || '').replace('ex-', '')) || 0;
-            const tB = parseInt((b.id || '').replace('ex-', '')) || 0;
-            return tB - tA;
-        });
-        state.cachedExams = data;
-        return data;
-    } catch (e) {
-        return localExamsFallback;
+    let exams = [];
+    if (db) {
+        try {
+            const { data, error } = await db.from('exams').select('*');
+            if (!error && data && data.length > 0) exams = data;
+        } catch (e) {}
     }
+    
+    if (exams.length === 0) exams = localExamsFallback;
+
+    exams.sort((a, b) => {
+        const tA = parseInt((a.id || '').replace('ex-', '')) || 0;
+        const tB = parseInt((b.id || '').replace('ex-', '')) || 0;
+        return tB - tA;
+    });
+    
+    state.cachedExams = exams;
+    return exams;
 }
 
 async function saveExamToDB(exam) {
     if (!exam.submissions) exam.submissions = [];
+    
+    // Spara i lokalt minne
     const localIdx = localExamsFallback.findIndex(e => e.id === exam.id);
     if (localIdx !== -1) localExamsFallback[localIdx] = exam;
     else localExamsFallback.unshift(exam);
     localStorage.setItem('waltelius_local_exams', JSON.stringify(localExamsFallback));
+
+    // Spara i cachen
+    const cacheIdx = state.cachedExams.findIndex(e => e.id === exam.id);
+    if (cacheIdx !== -1) state.cachedExams[cacheIdx] = exam;
+    else state.cachedExams.unshift(exam);
 
     if (!db) return true;
     try {
@@ -134,8 +145,13 @@ async function render() {
 
 function renderWelcome(container, exams) {
     const savedName = localStorage.getItem('waltelius_student_name') || '';
-    const activeExams = exams.filter(e => e.active && !e.archived);
-    const activeClasses = [...new Set(activeExams.map(e => e.klass))];
+    
+    // Säkrad filtrering för aktiva prov
+    const activeExams = exams.filter(e => (e.active === true || e.active === 'true') && e.archived !== true);
+    
+    // Unika klasser från aktiva prov (eller alla klasser om inga är aktiva)
+    const allClasses = [...new Set(exams.map(e => e.klass))];
+    const displayClasses = allClasses.length > 0 ? allClasses : ['7H', '8H', '9H'];
 
     container.innerHTML = `
         <div class="max-w-xl mx-auto mt-6 bg-white rounded-2xl border border-slate-200 shadow-xl p-6 sm:p-8">
@@ -156,7 +172,7 @@ function renderWelcome(container, exams) {
                     <label class="block text-sm font-semibold text-slate-700 mb-1">Klass</label>
                     <select id="studentClass" required onchange="updateExamDropdown()" class="w-full px-4 py-3 rounded-xl border border-slate-300 focus:ring-2 focus:ring-red-500 bg-white">
                         <option value="">-- Välj din klass --</option>
-                        ${activeClasses.map(c => `<option value="${c}">${c}</option>`).join('')}
+                        ${displayClasses.map(c => `<option value="${c}">${c}</option>`).join('')}
                     </select>
                 </div>
 
@@ -178,10 +194,12 @@ function renderWelcome(container, exams) {
 function updateExamDropdown() {
     const klass = document.getElementById('studentClass').value;
     const select = document.getElementById('studentExamSelect');
-    const exams = state.cachedExams.filter(e => e.active && !e.archived && e.klass === klass);
+    
+    // Hitta prov för vald klass som är aktiva
+    const exams = state.cachedExams.filter(e => e.klass === klass && (e.active === true || e.active === 'true') && e.archived !== true);
 
     if (!klass || exams.length === 0) {
-        select.innerHTML = '<option value="">-- Inga aktiva uppgifter för vald klass --</option>';
+        select.innerHTML = '<option value="">-- Inga aktiva uppgifter för ' + (klass || 'vald klass') + ' --</option>';
         select.disabled = true;
         return;
     }
@@ -305,7 +323,7 @@ function openCreateExamModal() {
         category: 'Historia',
         klass: '7H',
         code: Math.floor(1000 + Math.random() * 9000).toString(),
-        active: false,
+        active: true, // Sätts direkt som aktiv när den skapas för enkelhetens skull
         archived: false,
         questions: []
     };
@@ -494,6 +512,7 @@ async function saveEditedExam(e) {
     e.preventDefault();
     syncFormToState();
     const exam = state.editingExam;
+    exam.active = true; // Sätts som aktiv så fort den sparas
     await saveExamToDB(exam);
     switchView('admin');
 }
