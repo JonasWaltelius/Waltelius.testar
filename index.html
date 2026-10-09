@@ -11,14 +11,16 @@
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
         body { font-family: 'Inter', sans-serif; }
+        .no-select { user-select: none; -webkit-user-select: none; }
+        textarea, input { -webkit-user-select: text; }
     </style>
 </head>
-<body class="bg-slate-50 text-slate-800 min-h-screen flex flex-col antialiased">
+<body class="bg-slate-50 text-slate-800 min-h-screen flex flex-col antialiased no-select" oncopy="return false" oncut="return false">
 
     <!-- NAV / HEADER -->
     <header class="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-sm">
         <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
-            <div class="flex items-center space-x-3 cursor-pointer" onclick="switchView('welcome')">
+            <div class="flex items-center space-x-3 cursor-pointer" onclick="goHome()">
                 <div class="w-10 h-10 bg-gradient-to-br from-red-600 to-red-800 rounded-xl flex items-center justify-center text-white shadow-md">
                     <svg class="w-6 h-6" viewBox="0 0 100 100">
                         <path d="M 15 25 L 32.5 75 L 50 38 L 67.5 75 L 85 25" fill="none" stroke="#ffffff" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
@@ -36,6 +38,22 @@
 
     <main class="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8" id="app"></main>
 
+    <!-- MODAL FÖR FLIKBYTE / VARNING -->
+    <div id="cheatWarningModal" class="fixed inset-0 bg-slate-900/80 backdrop-blur-md z-50 flex items-center justify-center p-4 hidden">
+        <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 text-center border-2 border-amber-500">
+            <div class="w-16 h-16 bg-amber-100 rounded-full flex items-center justify-center mx-auto mb-4 text-amber-600 text-3xl">
+                <i class="fa-solid fa-triangle-exclamation"></i>
+            </div>
+            <h3 class="text-xl font-bold text-slate-900 mb-2" id="warningTitle">Varning: Du lämnade sidan!</h3>
+            <p class="text-sm text-slate-600 mb-6" id="warningMessage">
+                Du lämnade provfönstret. Detta registreras i systemet.
+            </p>
+            <button onclick="closeWarningModal()" class="w-full py-3 bg-amber-600 hover:bg-amber-700 text-white font-semibold rounded-xl shadow-md transition">
+                Jag förstår, återgå
+            </button>
+        </div>
+    </div>
+
 <script>
 const SUPABASE_URL = 'https://omjeuavtqdrktxohmebm.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9tamV1YXZ0cWRya3R4b2htZWJtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDEyNjkwMDAsImV4cCI6MjA1Njg0NTAwMH0.1_R5aR_u8-zN6lX_3-90d-_0';
@@ -51,11 +69,21 @@ const state = {
     answers: {},
     cachedExams: [],
     editingExam: null,
-    showArchive: false
+    showArchive: false,
+    examTimer: null,
+    examSeconds: 0,
+    warningCount: 0
 };
 
 function switchView(targetView) {
+    stopTimer();
     state.view = targetView;
+    render();
+}
+
+function goHome() {
+    stopTimer();
+    state.view = 'welcome';
     render();
 }
 
@@ -82,7 +110,6 @@ async function getExams() {
             if (!error && data && data.length > 0) exams = data;
         } catch (e) {}
     }
-    
     if (exams.length === 0) exams = localExamsFallback;
 
     exams.sort((a, b) => {
@@ -113,6 +140,68 @@ async function saveExamToDB(exam) {
         return true;
     } catch (e) {
         return true;
+    }
+}
+
+function startTimer() {
+    stopTimer();
+    state.examTimer = setInterval(() => {
+        state.examSeconds++;
+        const el = document.getElementById('digitalClock');
+        if (el) {
+            const mins = String(Math.floor(state.examSeconds / 60)).padStart(2, '0');
+            const secs = String(state.examSeconds % 60).padStart(2, '0');
+            el.innerText = `${mins}:${secs}`;
+        }
+    }, 1000);
+}
+
+function stopTimer() {
+    if (state.examTimer) {
+        clearInterval(state.examTimer);
+        state.examTimer = null;
+    }
+}
+
+function setupCheatDetection() {
+    window.onvisibilitychange = () => {
+        if (document.hidden && state.view === 'student_exam') {
+            triggerCheatWarning();
+        }
+    };
+    window.onblur = () => {
+        if (state.view === 'student_exam') {
+            triggerCheatWarning();
+        }
+    };
+}
+
+function triggerCheatWarning() {
+    state.warningCount++;
+    stopTimer();
+
+    const modal = document.getElementById('cheatWarningModal');
+    if (!modal) return;
+
+    if (state.warningCount === 1) {
+        document.getElementById('warningTitle').innerText = "Gult Kort: Du lämnade sidan!";
+        document.getElementById('warningMessage').innerText = "Du har lämnat provfönstret 1 gång. Om du lämnar sidan igen låses ditt prov.";
+        modal.classList.remove('hidden');
+    } else if (state.warningCount >= 2) {
+        document.getElementById('warningTitle').innerText = "Rött Kort: Provet låst!";
+        document.getElementById('warningMessage').innerText = "Ditt prov har låsts eftersom du lämnat sidan upprepade gånger.";
+        modal.classList.remove('hidden');
+    }
+}
+
+function closeWarningModal() {
+    const modal = document.getElementById('cheatWarningModal');
+    if (modal) modal.classList.add('hidden');
+
+    if (state.warningCount >= 2) {
+        goHome();
+    } else {
+        startTimer();
     }
 }
 
@@ -255,7 +344,12 @@ function handleCodeSubmit(e) {
     const code = document.getElementById('inputCode').value.trim();
     if (code === state.activeExam.code) {
         state.answers = {};
-        switchView('student_exam');
+        state.examSeconds = 0;
+        state.warningCount = 0;
+        state.view = 'student_exam';
+        setupCheatDetection();
+        startTimer();
+        render();
     } else {
         document.getElementById('codeError').classList.remove('hidden');
     }
@@ -264,13 +358,21 @@ function handleCodeSubmit(e) {
 function renderStudentExam(container) {
     const exam = state.activeExam || {};
     const questions = exam.questions || [];
+    const initialMins = String(Math.floor(state.examSeconds / 60)).padStart(2, '0');
+    const initialSecs = String(state.examSeconds % 60).padStart(2, '0');
 
     container.innerHTML = `
         <div class="max-w-2xl mx-auto space-y-6">
-            <div class="bg-gradient-to-r from-red-600 to-red-800 text-white p-6 rounded-2xl shadow-md">
-                <span class="text-xs uppercase font-semibold opacity-80">${exam.type} • ${exam.category}</span>
-                <h2 class="text-2xl font-bold">${exam.title}</h2>
-                <p class="text-xs opacity-90 mt-1">Elev: ${state.currentUser.name} (${state.currentUser.class})</p>
+            <div class="bg-gradient-to-r from-red-600 to-red-800 text-white p-6 rounded-2xl shadow-md flex items-center justify-between">
+                <div>
+                    <span class="text-xs uppercase font-semibold opacity-80">${exam.type} • ${exam.category}</span>
+                    <h2 class="text-2xl font-bold">${exam.title}</h2>
+                    <p class="text-xs opacity-90 mt-1">Elev: ${state.currentUser.name} (${state.currentUser.class})</p>
+                </div>
+                <div class="bg-white/10 px-4 py-2 rounded-xl backdrop-blur-sm flex items-center gap-2 border border-white/20">
+                    <i class="fa-regular fa-clock text-red-200"></i>
+                    <span id="digitalClock" class="font-mono font-bold text-lg text-white">${initialMins}:${initialSecs}</span>
+                </div>
             </div>
 
             <form onsubmit="handleExamSubmit(event)" class="space-y-6">
@@ -294,6 +396,7 @@ function renderStudentExam(container) {
 
 async function handleExamSubmit(e) {
     e.preventDefault();
+    stopTimer();
     const exam = state.activeExam;
     
     const submission = {
@@ -302,6 +405,8 @@ async function handleExamSubmit(e) {
         studentClass: state.currentUser.class,
         submittedAt: new Date().toLocaleString('sv-SE'),
         status: 'Inlämnat',
+        secondsSpent: state.examSeconds,
+        warnings: state.warningCount,
         answers: state.answers
     };
 
@@ -313,13 +418,17 @@ async function handleExamSubmit(e) {
 }
 
 function renderStudentResult(container) {
+    const mins = Math.floor(state.examSeconds / 60);
+    const secs = state.examSeconds % 60;
+
     container.innerHTML = `
         <div class="max-w-xl mx-auto mt-8 bg-white p-8 rounded-2xl border border-slate-200 shadow-xl text-center space-y-4">
             <div class="w-16 h-16 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto text-3xl">
                 <i class="fa-solid fa-circle-check"></i>
             </div>
             <h2 class="text-2xl font-bold text-slate-900">Inlämning mottagen!</h2>
-            <p class="text-sm text-slate-600">Tack <strong>${state.currentUser ? state.currentUser.name : 'Elev'}</strong>, din uppgift har registrerats i systemet.</p>
+            <p class="text-sm text-slate-600">Tack <strong>${state.currentUser ? state.currentUser.name : 'Elev'}</strong>, din uppgift har registrerats.</p>
+            <p class="text-xs text-slate-400 font-mono">Tidsåtgång: ${mins} min ${secs} sek ${state.warningCount > 0 ? '• Varningar: ' + state.warningCount : ''}</p>
             <button onclick="switchView('welcome')" class="w-full py-3 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl shadow-md transition">
                 Tillbaka till startsidan
             </button>
