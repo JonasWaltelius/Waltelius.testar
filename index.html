@@ -11,16 +11,14 @@
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
         body { font-family: 'Inter', sans-serif; }
-        .no-select { user-select: none; -webkit-user-select: none; }
-        textarea, input { -webkit-user-select: text; }
     </style>
 </head>
-<body class="bg-slate-50 text-slate-800 min-h-screen flex flex-col antialiased no-select" oncopy="return false" oncut="return false">
+<body class="bg-slate-50 text-slate-800 min-h-screen flex flex-col antialiased">
 
     <!-- NAV / HEADER -->
     <header class="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-sm">
         <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
-            <div class="flex items-center space-x-3 cursor-pointer" onclick="goHome()">
+            <div class="flex items-center space-x-3 cursor-pointer" onclick="switchView('welcome')">
                 <div class="w-10 h-10 bg-gradient-to-br from-red-600 to-red-800 rounded-xl flex items-center justify-center text-white shadow-md">
                     <svg class="w-6 h-6" viewBox="0 0 100 100">
                         <path d="M 15 25 L 32.5 75 L 50 38 L 67.5 75 L 85 25" fill="none" stroke="#ffffff" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
@@ -38,121 +36,48 @@
 
     <main class="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8" id="app"></main>
 
-    <!-- MODAL FÖR FLIKBYTE / VARNING -->
-    <div id="cheatWarningModal" class="fixed inset-0 bg-slate-900/80 backdrop-blur-md z-50 flex items-center justify-center p-4 hidden">
-        <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 text-center border-2 border-amber-500">
-            <div class="w-16 h-16 bg-amber-100 rounded-full flex items-center justify-center mx-auto mb-4 text-amber-600 text-3xl">
-                <i class="fa-solid fa-triangle-exclamation"></i>
-            </div>
-            <h3 class="text-xl font-bold text-slate-900 mb-2" id="warningTitle">Varning: Du lämnade sidan!</h3>
-            <p class="text-sm text-slate-600 mb-6" id="warningMessage">
-                Du lämnade provfönstret. Detta registreras i systemet.
-            </p>
-            <button onclick="closeWarningModal()" class="w-full py-3 bg-amber-600 hover:bg-amber-700 text-white font-semibold rounded-xl shadow-md transition">
-                Jag förstår, återgå
-            </button>
-        </div>
-    </div>
-
-    <!-- SVÄVANDE POPUP FÖR ELEVSVAR -->
-    <div id="studentDetailModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden" onclick="closeStudentDetailModal(event)">
-        <div class="bg-white rounded-2xl shadow-2xl max-w-2xl w-full max-h-[85vh] overflow-y-auto p-6 sm:p-8 relative" onclick="event.stopPropagation()">
-            <button onclick="closeStudentDetailModal()" class="absolute top-4 right-4 w-9 h-9 rounded-full bg-slate-100 text-slate-500 hover:bg-slate-200 flex items-center justify-center text-lg">
-                <i class="fa-solid fa-xmark"></i>
-            </button>
-            <div id="studentDetailContent"></div>
-        </div>
-    </div>
-
 <script>
 const SUPABASE_URL = 'https://omjeuavtqdrktxohmebm.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9tamV1YXZ0cWRya3R4b2htZWJtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDEyNjkwMDAsImV4cCI6MjA1Njg0NTAwMH0.1_R5aR_u8-zN6lX_3-90d-_0';
 const db = window.supabase ? window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY) : null;
 
-const BANNED_WORDS = ['fan', 'jävel', 'helvete', 'skit', 'kukk', 'fitta', 'hor', 'bajs', 'snopp', 'fart', 'idiot', 'knulla', 'hitler', 'stalin', 'bitch'];
 let localExamsFallback = JSON.parse(localStorage.getItem('waltelius_local_exams') || '[]');
 
 const state = {
     view: 'welcome',
-    currentUser: null,
-    selectedExamId: null,
-    activeExam: null,
-    answers: {},
     cachedExams: [],
     editingExam: null,
-    showArchive: false,
-    examTimer: null,
-    examSeconds: 0,
-    warningCount: 0
+    showArchive: false
 };
 
 function switchView(targetView) {
-    stopTimer();
     state.view = targetView;
     render();
 }
 
-function goHome() {
-    stopTimer();
-    state.view = 'welcome';
-    render();
-}
-
-function shuffleArray(array) {
-    const arr = [...array];
-    for (let i = arr.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [arr[i], arr[j]] = [arr[j], arr[i]];
-    }
-    return arr;
-}
-
-function validateStudentName(name) {
-    const trimmed = name.trim();
-    const parts = trimmed.split(/\s+/);
-    if (parts.length < 2 || parts[0].length < 2 || parts[1].length < 2) {
-        return { valid: false, msg: "Vänligen ange både ditt riktiga för- och efternamn." };
-    }
-    const lower = trimmed.toLowerCase();
-    for (let word of BANNED_WORDS) {
-        if (lower.includes(word)) {
-            return { valid: false, msg: "Vänligen ange ditt riktiga namn." };
-        }
-    }
-    return { valid: true };
-}
-
 async function getExams() {
-    let exams = [];
-    if (db) {
-        try {
-            const { data, error } = await db.from('exams').select('*');
-            if (!error && data && data.length > 0) exams = data;
-        } catch (e) {}
+    if (!db) return localExamsFallback;
+    try {
+        const { data, error } = await db.from('exams').select('*');
+        if (error || !data || data.length === 0) return localExamsFallback;
+        data.sort((a, b) => {
+            const tA = parseInt((a.id || '').replace('ex-', '')) || 0;
+            const tB = parseInt((b.id || '').replace('ex-', '')) || 0;
+            return tB - tA;
+        });
+        state.cachedExams = data;
+        return data;
+    } catch (e) {
+        return localExamsFallback;
     }
-    if (exams.length === 0) exams = localExamsFallback;
-
-    exams.sort((a, b) => {
-        const tA = parseInt((a.id || '').replace('ex-', '')) || 0;
-        const tB = parseInt((b.id || '').replace('ex-', '')) || 0;
-        return tB - tA;
-    });
-    
-    state.cachedExams = exams;
-    return exams;
 }
 
 async function saveExamToDB(exam) {
     if (!exam.submissions) exam.submissions = [];
-    
     const localIdx = localExamsFallback.findIndex(e => e.id === exam.id);
     if (localIdx !== -1) localExamsFallback[localIdx] = exam;
     else localExamsFallback.unshift(exam);
     localStorage.setItem('waltelius_local_exams', JSON.stringify(localExamsFallback));
-
-    const cacheIdx = state.cachedExams.findIndex(e => e.id === exam.id);
-    if (cacheIdx !== -1) state.cachedExams[cacheIdx] = exam;
-    else state.cachedExams.unshift(exam);
 
     if (!db) return true;
     try {
@@ -160,62 +85,6 @@ async function saveExamToDB(exam) {
         return true;
     } catch (e) {
         return true;
-    }
-}
-
-function startTimer() {
-    stopTimer();
-    state.examTimer = setInterval(() => {
-        state.examSeconds++;
-        const el = document.getElementById('digitalClock');
-        if (el) {
-            const mins = Math.floor(state.examSeconds / 60);
-            el.innerText = `${mins} min`;
-        }
-    }, 1000);
-}
-
-function stopTimer() {
-    if (state.examTimer) {
-        clearInterval(state.examTimer);
-        state.examTimer = null;
-    }
-}
-
-function setupCheatDetection() {
-    document.onvisibilitychange = () => {
-        if (document.hidden && state.view === 'student_exam') {
-            triggerCheatWarning();
-        }
-    };
-}
-
-function triggerCheatWarning() {
-    state.warningCount++;
-    stopTimer();
-
-    const modal = document.getElementById('cheatWarningModal');
-    if (!modal) return;
-
-    if (state.warningCount === 1) {
-        document.getElementById('warningTitle').innerText = "Gult Kort: Du lämnade sidan!";
-        document.getElementById('warningMessage').innerText = "Du har lämnat provfönstret 1 gång. Om du lämnar sidan igen låses ditt prov.";
-        modal.classList.remove('hidden');
-    } else if (state.warningCount >= 2) {
-        document.getElementById('warningTitle').innerText = "Rött Kort: Provet låst!";
-        document.getElementById('warningMessage').innerText = "Ditt prov har låsts eftersom du lämnat sidan upprepade gånger.";
-        modal.classList.remove('hidden');
-    }
-}
-
-function closeWarningModal() {
-    const modal = document.getElementById('cheatWarningModal');
-    if (modal) modal.classList.add('hidden');
-
-    if (state.warningCount >= 2) {
-        goHome();
-    } else {
-        startTimer();
     }
 }
 
@@ -236,254 +105,26 @@ async function render() {
 
     if (state.view === 'admin') {
         renderAdmin(app, exams);
-    } else if (state.view === 'admin_board') {
-        renderAdminBoard(app, exams);
     } else if (state.view === 'admin_edit') {
         renderAdminEdit(app);
-    } else if (state.view === 'student_code') {
-        renderStudentCode(app);
-    } else if (state.view === 'student_exam') {
-        renderStudentExam(app);
-    } else if (state.view === 'student_result') {
-        renderStudentResult(app);
     } else {
         renderWelcome(app, exams);
     }
 }
 
 function renderWelcome(container, exams) {
-    const savedName = localStorage.getItem('waltelius_student_name') || '';
-    const activeExams = exams.filter(e => (e.active === true || e.active === 'true') && e.archived !== true);
-    const allClasses = [...new Set(exams.map(e => e.klass))];
-    const displayClasses = allClasses.length > 0 ? allClasses : ['7H', '8H', '9H'];
-
     container.innerHTML = `
-        <div class="max-w-xl mx-auto mt-6 bg-white rounded-2xl border border-slate-200 shadow-xl p-6 sm:p-8">
-            <div class="text-center mb-8">
-                <span class="inline-block px-3 py-1 bg-red-100 text-red-700 text-xs font-bold rounded-full uppercase tracking-wider mb-2">Elevportal</span>
-                <h2 class="text-2xl sm:text-3xl font-extrabold text-slate-900">Välkommen till Waltelius<span class="text-red-600">.testar</span></h2>
-                <p class="text-sm text-slate-600 mt-2">Fyll i namn och välj din klass för att hitta din uppgift.</p>
-            </div>
-
-            <form onsubmit="handleWelcomeSubmit(event)" class="space-y-5">
-                <div>
-                    <label class="block text-sm font-semibold text-slate-700 mb-1">Ditt För- och Efternamn</label>
-                    <input type="text" id="studentName" required value="${savedName}" placeholder="t.ex. Anna Svensson" 
-                        autocomplete="off" class="w-full px-4 py-3 rounded-xl border border-slate-300 focus:ring-2 focus:ring-red-500 outline-none">
-                </div>
-
-                <div>
-                    <label class="block text-sm font-semibold text-slate-700 mb-1">Klass</label>
-                    <select id="studentClass" required onchange="updateExamDropdown()" class="w-full px-4 py-3 rounded-xl border border-slate-300 focus:ring-2 focus:ring-red-500 bg-white">
-                        <option value="">-- Välj din klass --</option>
-                        ${displayClasses.map(c => `<option value="${c}">${c}</option>`).join('')}
-                    </select>
-                </div>
-
-                <div>
-                    <label class="block text-sm font-semibold text-slate-700 mb-1">Välj Material / Uppgift</label>
-                    <select id="studentExamSelect" required disabled class="w-full px-4 py-3 rounded-xl border border-slate-300 focus:ring-2 focus:ring-red-500 bg-white disabled:bg-slate-100">
-                        <option value="">-- Välj klass först --</option>
-                    </select>
-                </div>
-
-                <button type="submit" class="w-full py-3.5 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl shadow-lg transition">
-                    Gå vidare till kod →
-                </button>
-            </form>
-        </div>
-    `;
-}
-
-function updateExamDropdown() {
-    const klass = document.getElementById('studentClass').value;
-    const select = document.getElementById('studentExamSelect');
-    const exams = state.cachedExams.filter(e => e.klass === klass && (e.active === true || e.active === 'true') && e.archived !== true);
-
-    if (!klass || exams.length === 0) {
-        select.innerHTML = '<option value="">-- Inga aktiva uppgifter för ' + (klass || 'vald klass') + ' --</option>';
-        select.disabled = true;
-        return;
-    }
-
-    select.disabled = false;
-    select.innerHTML = '<option value="">-- Välj uppgift --</option>' + 
-        exams.map(e => `<option value="${e.id}">${e.title} (${e.type} - ${e.category})</option>`).join('');
-}
-
-function handleWelcomeSubmit(e) {
-    e.preventDefault();
-    const nameInput = document.getElementById('studentName').value;
-    const validation = validateStudentName(nameInput);
-    if (!validation.valid) {
-        alert(validation.msg);
-        return;
-    }
-
-    const name = nameInput.trim();
-    localStorage.setItem('waltelius_student_name', name);
-
-    const klass = document.getElementById('studentClass').value;
-    const examId = document.getElementById('studentExamSelect').value;
-
-    const originalExam = state.cachedExams.find(ex => ex.id === examId);
-
-    const preparedQuestions = (originalExam.questions || []).map(q => {
-        if (q.type === 'mc' && q.options) {
-            return {
-                ...q,
-                shuffledOptions: shuffleArray(q.options)
-            };
-        }
-        return q;
-    });
-
-    state.currentUser = { name, class: klass };
-    state.activeExam = { ...originalExam, questions: preparedQuestions };
-    switchView('student_code');
-}
-
-function renderStudentCode(container) {
-    container.innerHTML = `
-        <div class="max-w-md mx-auto mt-12 bg-white rounded-2xl border border-slate-200 shadow-xl p-6 sm:p-8 text-center">
-            <div class="w-14 h-14 bg-red-100 text-red-600 rounded-2xl flex items-center justify-center mx-auto mb-4 text-2xl">
-                <i class="fa-solid fa-key"></i>
-            </div>
-            <h2 class="text-2xl font-bold text-slate-900 mb-1">Ange Provkod</h2>
-            <p class="text-xs text-slate-500 mb-6">Slå in koden för "${state.activeExam ? state.activeExam.title : ''}"</p>
-
-            <form onsubmit="handleCodeSubmit(event)" class="space-y-4">
-                <input type="text" id="inputCode" maxlength="4" required placeholder="0 0 0 0"
-                    class="w-full text-center text-3xl font-mono tracking-widest py-3 border-2 border-slate-300 rounded-xl focus:border-red-600 outline-none uppercase">
-                
-                <div id="codeError" class="text-red-500 text-xs font-semibold hidden">Felaktig kod. Försök igen.</div>
-
-                <div class="flex space-x-3 pt-2">
-                    <button type="button" onclick="switchView('welcome')" class="w-1/2 py-3 bg-slate-100 text-slate-700 font-semibold rounded-xl">Tillbaka</button>
-                    <button type="submit" class="w-1/2 py-3 bg-red-600 text-white font-semibold rounded-xl shadow-md">Starta uppgiften</button>
-                </div>
-            </form>
-        </div>
-    `;
-}
-
-function handleCodeSubmit(e) {
-    e.preventDefault();
-    const code = document.getElementById('inputCode').value.trim();
-    if (code === state.activeExam.code) {
-        state.answers = {};
-        state.examSeconds = 0;
-        state.warningCount = 0;
-        state.view = 'student_exam';
-        setupCheatDetection();
-        startTimer();
-        render();
-    } else {
-        document.getElementById('codeError').classList.remove('hidden');
-    }
-}
-
-function renderStudentExam(container) {
-    const exam = state.activeExam || {};
-    const questions = exam.questions || [];
-    const initialMins = Math.floor(state.examSeconds / 60);
-
-    container.innerHTML = `
-        <div class="max-w-2xl mx-auto space-y-6">
-            <div class="bg-gradient-to-r from-red-600 to-red-800 text-white p-6 rounded-2xl shadow-md flex items-center justify-between">
-                <div>
-                    <span class="text-xs uppercase font-semibold opacity-80">${exam.type} • ${exam.category}</span>
-                    <h2 class="text-2xl font-bold">${exam.title}</h2>
-                    <p class="text-xs opacity-90 mt-1">Elev: ${state.currentUser.name} (${state.currentUser.class})</p>
-                </div>
-                <div class="bg-white/10 px-4 py-2 rounded-xl backdrop-blur-sm flex items-center gap-2 border border-white/20">
-                    <i class="fa-regular fa-clock text-red-200"></i>
-                    <span id="digitalClock" class="font-mono font-bold text-sm text-white">${initialMins} min</span>
-                </div>
-            </div>
-
-            <form onsubmit="handleExamSubmit(event)" class="space-y-6">
-                ${questions.length === 0 ? '<div class="bg-white p-6 rounded-2xl border text-center text-slate-400">Denna uppgift saknar frågor än så länge.</div>' : ''}
-                ${questions.map((q, idx) => {
-                    const optionsList = q.shuffledOptions || q.options || [];
-                    if (q.type === 'mc') {
-                        return `
-                            <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-3">
-                                <div class="text-xs font-bold text-red-600">Fråga ${idx + 1} (Flerval)</div>
-                                <h3 class="text-base font-bold text-slate-900">${q.text}</h3>
-                                <div class="space-y-2 pt-1">
-                                    ${optionsList.map(opt => `
-                                        <label class="flex items-center p-3 rounded-xl border border-slate-200 hover:bg-slate-50 cursor-pointer">
-                                            <input type="radio" name="q_${idx}" value="${opt}" onchange="state.answers['q_${idx}'] = this.value" required class="w-4 h-4 text-red-600">
-                                            <span class="ml-3 text-sm text-slate-700">${opt}</span>
-                                        </label>
-                                    `).join('')}
-                                </div>
-                            </div>
-                        `;
-                    } else {
-                        return `
-                            <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-3">
-                                <div class="text-xs font-bold text-red-600">Fråga ${idx + 1}</div>
-                                <h3 class="text-base font-bold text-slate-900">${q.text || 'Läs frågan'}</h3>
-                                <textarea required onchange="state.answers['q_${idx}'] = this.value" rows="4" 
-                                    placeholder="Skriv ditt svar här..." class="w-full p-3.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-red-500 outline-none text-sm"></textarea>
-                            </div>
-                        `;
-                    }
-                }).join('')}
-
-                <button type="submit" class="w-full py-3.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl shadow-lg transition">
-                    Lämna in svar
-                </button>
-            </form>
-        </div>
-    `;
-}
-
-async function handleExamSubmit(e) {
-    e.preventDefault();
-    stopTimer();
-    const exam = state.activeExam;
-    
-    const submission = {
-        id: 'sub-' + Date.now(),
-        studentName: state.currentUser.name,
-        studentClass: state.currentUser.class,
-        submittedAt: new Date().toLocaleString('sv-SE'),
-        status: 'Inlämnat',
-        secondsSpent: state.examSeconds,
-        warnings: state.warningCount,
-        reviewed: false,
-        answers: state.answers
-    };
-
-    if (!exam.submissions) exam.submissions = [];
-    exam.submissions.push(submission);
-
-    await saveExamToDB(exam);
-    switchView('student_result');
-}
-
-function renderStudentResult(container) {
-    const mins = Math.floor(state.examSeconds / 60);
-
-    container.innerHTML = `
-        <div class="max-w-xl mx-auto mt-8 bg-white p-8 rounded-2xl border border-slate-200 shadow-xl text-center space-y-4">
-            <div class="w-16 h-16 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto text-3xl">
-                <i class="fa-solid fa-circle-check"></i>
-            </div>
-            <h2 class="text-2xl font-bold text-slate-900">Inlämning mottagen!</h2>
-            <p class="text-sm text-slate-600">Tack <strong>${state.currentUser ? state.currentUser.name : 'Elev'}</strong>, din uppgift har registrerats.</p>
-            <p class="text-xs text-slate-400 font-mono">Tidsåtgång: ${mins} min ${state.warningCount > 0 ? '• Varningar: ' + state.warningCount : ''}</p>
-            <button onclick="switchView('welcome')" class="w-full py-3 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl shadow-md transition">
-                Tillbaka till startsidan
+        <div class="max-w-xl mx-auto mt-6 bg-white rounded-2xl border border-slate-200 shadow-xl p-6 sm:p-8 text-center">
+            <span class="inline-block px-3 py-1 bg-red-100 text-red-700 text-xs font-bold rounded-full uppercase tracking-wider mb-2">Elevportal</span>
+            <h2 class="text-2xl font-extrabold text-slate-900 mb-4">Välkommen till Waltelius<span class="text-red-600">.testar</span></h2>
+            <p class="text-sm text-slate-600 mb-6">Systemet är återställt och redo.</p>
+            <button onclick="switchView('admin')" class="w-full py-3 bg-red-600 text-white font-bold rounded-xl shadow-md hover:bg-red-700">
+                Gå till Testpanelen
             </button>
         </div>
     `;
 }
 
-// --- ADMIN & LÄRARÖVERSIKT ---
 function renderAdmin(container, exams) {
     const isArchive = state.showArchive;
     const filteredExams = exams.filter(e => isArchive ? e.archived : !e.archived);
@@ -522,9 +163,6 @@ function renderAdmin(container, exams) {
                             <button onclick="toggleActive('${e.id}')" class="px-3 py-1.5 text-xs font-bold rounded-lg border ${e.active ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-emerald-600 text-white shadow-sm'}">
                                 ${e.active ? 'Inaktivera' : 'Aktivera nu!'}
                             </button>
-                            <button onclick="goToBoard('${e.id}')" class="px-2.5 py-1.5 bg-slate-100 text-slate-700 font-semibold rounded-lg text-xs">
-                                Översikt
-                            </button>
                             <button onclick="openEditExam('${e.id}')" class="px-2.5 py-1.5 bg-slate-100 text-slate-700 font-semibold rounded-lg text-xs">
                                 Redigera
                             </button>
@@ -539,115 +177,6 @@ function renderAdmin(container, exams) {
     `;
 }
 
-function goToBoard(id) {
-    state.selectedExamId = id;
-    switchView('admin_board');
-}
-
-function renderAdminBoard(container, exams) {
-    const exam = exams.find(e => e.id === state.selectedExamId);
-    if (!exam) return;
-    const subs = exam.submissions || [];
-
-    container.innerHTML = `
-        <div class="space-y-6">
-            <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex items-center justify-between">
-                <div>
-                    <h2 class="text-2xl font-bold text-slate-900">${exam.title} - Elevöversikt</h2>
-                    <p class="text-xs text-slate-500 mt-1">Klass ${exam.klass} • ${exam.type} • Totalt ${subs.length} inlämningar</p>
-                </div>
-                <button onclick="switchView('admin')" class="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold rounded-xl text-sm">
-                    Tillbaka
-                </button>
-            </div>
-
-            <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-                <table class="w-full text-left border-collapse">
-                    <thead>
-                        <tr class="bg-slate-50 border-b border-slate-200 text-xs font-bold text-slate-500 uppercase">
-                            <th class="p-4">Elev</th>
-                            <th class="p-4">Status</th>
-                            <th class="p-4">Tid</th>
-                            <th class="p-4">Varningar</th>
-                            <th class="p-4 text-right">Granskad</th>
-                        </tr>
-                    </thead>
-                    <tbody class="divide-y divide-slate-200 text-sm">
-                        ${subs.length === 0 ? '<tr><td colspan="5" class="p-6 text-center text-slate-400">Inga elever har lämnat in ännu.</td></tr>' : ''}
-                        ${subs.map(s => {
-                            const mins = Math.floor((s.secondsSpent || 0) / 60);
-                            return `
-                                <tr class="hover:bg-slate-50">
-                                    <td class="p-4 font-bold text-slate-900 cursor-pointer text-red-600 hover:underline" onclick="openStudentDetailModal('${s.id}')">
-                                        ${s.studentName} <i class="fa-solid fa-circle-info text-xs ml-1 opacity-60"></i>
-                                    </td>
-                                    <td class="p-4"><span class="px-2.5 py-1 text-xs font-semibold rounded-full bg-emerald-100 text-emerald-800">${s.status || 'Inlämnat'}</span></td>
-                                    <td class="p-4 font-mono text-xs text-slate-500">${mins} min</td>
-                                    <td class="p-4 text-xs font-semibold ${s.warnings > 0 ? 'text-amber-600' : 'text-slate-400'}">${s.warnings || 0} st</td>
-                                    <td class="p-4 text-right">
-                                        <button onclick="toggleStudentReviewed('${s.id}')" class="px-3 py-1.5 font-semibold text-xs rounded-lg ${s.reviewed ? 'bg-emerald-100 text-emerald-800 border border-emerald-300' : 'bg-slate-100 text-slate-700'}">
-                                            ${s.reviewed ? '✅ Granskad' : 'Markera som granskad'}
-                                        </button>
-                                    </td>
-                                </tr>
-                            `;
-                        }).join('')}
-                    </tbody>
-                </table>
-            </div>
-        </div>
-    `;
-}
-
-async function toggleStudentReviewed(subId) {
-    const exam = state.cachedExams.find(e => e.id === state.selectedExamId);
-    if (!exam || !exam.submissions) return;
-    const sub = exam.submissions.find(s => s.id === subId);
-    if (sub) {
-        sub.reviewed = !sub.reviewed;
-        await saveExamToDB(exam);
-        render();
-    }
-}
-
-function openStudentDetailModal(subId) {
-    const exam = state.cachedExams.find(e => e.id === state.selectedExamId);
-    if (!exam || !exam.submissions) return;
-    const sub = exam.submissions.find(s => s.id === subId);
-    if (!sub) return;
-
-    const mins = Math.floor((sub.secondsSpent || 0) / 60);
-
-    const content = document.getElementById('studentDetailContent');
-    content.innerHTML = `
-        <div class="space-y-6">
-            <div>
-                <span class="text-xs font-bold text-red-600 uppercase tracking-wider">Elevsvar</span>
-                <h2 class="text-2xl font-bold text-slate-900">${sub.studentName}</h2>
-                <p class="text-xs text-slate-500">${exam.title} • Inlämnad: ${sub.submittedAt || ''} • Tid: ${mins} min</p>
-            </div>
-
-            <div class="space-y-4">
-                ${(exam.questions || []).map((q, idx) => {
-                    const ans = sub.answers ? sub.answers['q_' + idx] : 'Inget svar';
-                    return `
-                        <div class="p-4 rounded-xl border border-slate-200 bg-slate-50 space-y-2">
-                            <span class="font-bold text-xs text-slate-500">Fråga ${idx + 1} (${q.type === 'mc' ? 'Flerval' : 'Öppen text'})</span>
-                            <h4 class="font-bold text-slate-800 text-sm">${q.text}</h4>
-                            <div class="p-3 bg-white rounded-lg border border-slate-200 text-xs font-mono text-slate-700 whitespace-pre-wrap">${ans || 'Inget svar'}</div>
-                        </div>
-                    `;
-                }).join('')}
-            </div>
-        </div>
-    `;
-    document.getElementById('studentDetailModal').classList.remove('hidden');
-}
-
-function closeStudentDetailModal() {
-    document.getElementById('studentDetailModal').classList.add('hidden');
-}
-
 function openCreateExamModal() {
     state.editingExam = {
         id: 'ex-' + Date.now(),
@@ -656,7 +185,7 @@ function openCreateExamModal() {
         category: 'Historia',
         klass: '7H',
         code: Math.floor(1000 + Math.random() * 9000).toString(),
-        active: true,
+        active: false,
         archived: false,
         questions: []
     };
@@ -789,7 +318,6 @@ function renderAdminEdit(container) {
                 <div class="flex items-center justify-between pt-4 border-t border-slate-200">
                     <div class="space-x-2">
                         <button type="button" onclick="addTextQuestion()" class="px-3 py-2 bg-red-50 text-red-700 font-bold text-xs rounded-xl">+ Öppen fråga</button>
-                        <button type="button" onclick="addMCQuestion()" class="px-3 py-2 bg-red-50 text-red-700 font-bold text-xs rounded-xl">+ Flervalsfråga</button>
                     </div>
                     <button type="submit" class="px-6 py-2.5 bg-emerald-600 text-white font-bold rounded-xl text-xs shadow-md">
                         Spara Uppgift
@@ -818,46 +346,21 @@ function toggleCustomKlassInput(val) {
 }
 
 function renderEditQuestionCard(q, idx, totalQuestions) {
-    if (q.type === 'mc') {
-        return `
-            <div class="p-4 rounded-xl border border-slate-200 bg-slate-50 space-y-3">
-                <div class="flex items-center justify-between">
-                    <span class="font-bold text-xs text-red-600">Flervalsfråga ${idx + 1}</span>
-                    <button type="button" onclick="removeQuestion(${idx})" class="text-red-500 text-xs"><i class="fa-solid fa-trash"></i></button>
-                </div>
-                <input type="text" value="${q.text || ''}" onchange="state.editingExam.questions[${idx}].text = this.value" placeholder="Skriv frågan..." class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm">
-                <div class="space-y-2 pt-1">
-                    <label class="block text-xs font-bold text-slate-600">Svarsalternativ:</label>
-                    ${(q.options || []).map((opt, oIdx) => `
-                        <input type="text" value="${opt \vert{}\vert{} ''}" onchange="state.editingExam.questions[${idx}].options[${oIdx}] = this.value" placeholder="Alternativ ${oIdx + 1}" class="w-full px-3 py-1.5 rounded-lg border border-slate-300 text-sm">
-                    `).join('')}
-                </div>
+    return `
+        <div class="p-4 rounded-xl border border-slate-200 bg-slate-50 space-y-3">
+            <div class="flex items-center justify-between">
+                <span class="font-bold text-xs text-red-600">Fråga ${idx + 1}</span>
+                <button type="button" onclick="removeQuestion(${idx})" class="text-red-500 text-xs"><i class="fa-solid fa-trash"></i></button>
             </div>
-        `;
-    } else {
-        return `
-            <div class="p-4 rounded-xl border border-slate-200 bg-slate-50 space-y-3">
-                <div class="flex items-center justify-between">
-                    <span class="font-bold text-xs text-red-600">Öppen fråga ${idx + 1}</span>
-                    <button type="button" onclick="removeQuestion(${idx})" class="text-red-500 text-xs"><i class="fa-solid fa-trash"></i></button>
-                </div>
-                <input type="text" value="${q.text || ''}" onchange="state.editingExam.questions[${idx}].text = this.value" placeholder="Skriv frågan..." class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm">
-            </div>
-        `;
-    }
+            <input type="text" value="${q.text || ''}" onchange="state.editingExam.questions[${idx}].text = this.value" placeholder="Skriv frågan..." class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm">
+        </div>
+    `;
 }
 
 function addTextQuestion() {
     syncFormToState();
     if (!state.editingExam.questions) state.editingExam.questions = [];
-    state.editingExam.questions.push({ id: Date.now(), type: 'text', text: '' });
-    render();
-}
-
-function addMCQuestion() {
-    syncFormToState();
-    if (!state.editingExam.questions) state.editingExam.questions = [];
-    state.editingExam.questions.push({ id: Date.now(), type: 'mc', text: '', options: ['', '', '', ''] });
+    state.editingExam.questions.push({ id: Date.now(), type: 'text', text: '', criteria: '' });
     render();
 }
 
@@ -871,7 +374,6 @@ async function saveEditedExam(e) {
     e.preventDefault();
     syncFormToState();
     const exam = state.editingExam;
-    exam.active = true;
     await saveExamToDB(exam);
     switchView('admin');
 }
