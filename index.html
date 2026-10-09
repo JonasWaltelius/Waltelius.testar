@@ -15,7 +15,7 @@
         textarea, input { -webkit-user-select: text; }
     </style>
 </head>
-<body class="bg-slate-50 text-slate-800 min-h-screen flex flex-col antialiased no-select" oncopy="return false" oncut="return false">
+<body class="bg-slate-50 text-slate-800 min-h-screen flex flex-col antialiased no-select" oncopy="return false" oncut="return false" onpaste="return false">
 
     <!-- NAV / HEADER -->
     <header class="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-sm">
@@ -127,6 +127,23 @@ const state = {
     projectorInterval: null,
     lastSubmittedData: null
 };
+
+function enterFullScreen() {
+    try {
+        const docEl = document.documentElement;
+        if (docEl.requestFullscreen) docEl.requestFullscreen();
+        else if (docEl.webkitRequestFullscreen) docEl.webkitRequestFullscreen();
+        else if (docEl.msRequestFullscreen) docEl.msRequestFullscreen();
+    } catch(e) {}
+}
+
+function exitFullScreen() {
+    try {
+        if (document.exitFullscreen) document.exitFullscreen();
+        else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
+        else if (document.msExitFullscreen) document.msExitFullscreen();
+    } catch(e) {}
+}
 
 function switchView(targetView) {
     stopTimer();
@@ -251,7 +268,6 @@ async function triggerCheatWarning() {
     state.warningCount++;
     stopTimer();
 
-    // Registrera varning i aktiva listan för projektorvisning
     if (state.activeExam && state.currentUser) {
         const student = (state.activeExam.activeStudents || []).find(s => s.name === state.currentUser.name);
         if (student) {
@@ -280,6 +296,7 @@ function closeWarningModal() {
     if (modal) modal.classList.add('hidden');
 
     if (state.warningCount >= 2) {
+        exitFullScreen();
         goHome();
     } else {
         startTimer();
@@ -395,7 +412,13 @@ function handleWelcomeSubmit(e) {
 
     const originalExam = state.cachedExams.find(ex => ex.id === examId);
 
-    // Om det är Entry/Exit ticket, slumpa ordningen på begrepp och förklaringar
+    // Spärr mot dubbel inlämning för samma elev
+    const hasAlreadySubmitted = (originalExam.submissions || []).some(s => s.studentName.toLowerCase() === name.toLowerCase());
+    if (hasAlreadySubmitted) {
+        alert("Du har redan lämnat in denna uppgift! Om du behöver göra om den, kontakta din lärare.");
+        return;
+    }
+
     let preparedQuestions = (originalExam.questions || []);
     if (['Entryticket', 'Exitticket'].includes(originalExam.type)) {
         preparedQuestions = shuffleArray(preparedQuestions);
@@ -438,7 +461,9 @@ async function handleCodeSubmit(e) {
         state.examSeconds = 0;
         state.warningCount = 0;
 
-        // Registrera eleven i aktiva listan för projektorvisning
+        // Slå på helskärm för elevens enhet/Chromebook
+        enterFullScreen();
+
         if (!state.activeExam.activeStudents) state.activeExam.activeStudents = [];
         const existingIdx = state.activeExam.activeStudents.findIndex(s => s.name === state.currentUser.name);
         if (existingIdx !== -1) {
@@ -490,7 +515,7 @@ function renderStudentExam(container) {
                         <div class="text-xs font-bold text-red-600">${isTicket ? 'Begrepp ' + (idx + 1) : 'Fråga ' + (idx + 1)}</div>
                         <h3 class="text-base font-bold text-slate-900">${q.text || 'Begrepp/Fråga'}</h3>
                         ${isTicket && q.explanation ? `<div class="text-xs bg-slate-100 p-2.5 rounded-lg text-slate-600"><strong>Förklaring/Kontext:</strong> ${q.explanation}</div>` : ''}
-                        <textarea required onchange="state.answers['q_${idx}'] = this.value" rows="3" 
+                        <textarea required onpaste="return false" oncopy="return false" oncut="return false" onchange="state.answers['q_${idx}'] = this.value" rows="3" 
                             placeholder="${isTicket ? 'Skriv förklaring/resonemang kring begreppet...' : 'Skriv ditt svar här...'}" class="w-full p-3.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-red-500 outline-none text-sm"></textarea>
                     </div>
                 `).join('')}
@@ -506,35 +531,65 @@ function renderStudentExam(container) {
 async function handleExamSubmit(e) {
     e.preventDefault();
     stopTimer();
+    exitFullScreen();
     const exam = state.activeExam;
 
-    // Ta bort från pågående listan
     if (exam.activeStudents) {
         exam.activeStudents = exam.activeStudents.filter(s => s.name !== state.currentUser.name);
     }
 
-    // Automatisk utvärdering, plupp & formativ feedback direkt till elev
-    let totalLength = 0;
-    let filledCount = 0;
+    // Utvärdera varje enskild fråga, ge plupp + per-fråga feedback
+    const questionResults = [];
+    let greenCount = 0;
+    let darkGreenCount = 0;
+    let redCount = 0;
+
     (exam.questions || []).forEach((q, idx) => {
-        const val = (state.answers['q_' + idx] || '').trim();
-        if (val.length > 0) filledCount++;
-        totalLength += val.length;
+        const studentAns = (state.answers['q_' + idx] || '').trim();
+        let questionPlupp = 'lightgreen'; // lightgreen, darkgreen, red
+        let statusText = '';
+        let hintText = '';
+
+        if (studentAns.length === 0) {
+            questionPlupp = 'red';
+            statusText = 'Inget svar angivet';
+            hintText = 'Tänk på att alltid försöka svara på alla frågor.';
+        } else if (studentAns.length < 15) {
+            questionPlupp = 'red';
+            statusText = 'Ej helt godkänt / Kortfattat';
+            hintText = q.criteria ? `Vad du kunde svarat: ${q.criteria}` : 'Försök att utveckla och förklara din tanke lite mer noggrant.';
+        } else if (studentAns.length > 90) {
+            questionPlupp = 'darkgreen';
+            statusText = 'Rätt! Utvecklat och utförligt';
+            hintText = 'Utmärkt skrivet! Du visar ett djupgående resonemang.';
+        } else {
+            questionPlupp = 'lightgreen';
+            statusText = 'Rätt! Enkelt och grundläggande';
+            hintText = 'Bra jobbat! För högre nivå kan du koppla till fler exempel eller förklara orsaker.';
+        }
+
+        if (questionPlupp === 'darkgreen') darkGreenCount++;
+        else if (questionPlupp === 'lightgreen') greenCount++;
+        else redCount++;
+
+        questionResults.push({
+            questionIdx: idx + 1,
+            questionText: q.text,
+            studentAnswer: studentAns,
+            plupp: questionPlupp,
+            statusText: statusText,
+            hintText: hintText
+        });
     });
 
-    const totalQuestions = (exam.questions || []).length;
-    let autoPlupp = 'lightgreen';
-    let autoFeedback = '';
-
-    if (filledCount < totalQuestions || totalLength < 15) {
-        autoPlupp = 'red';
-        autoFeedback = `🔴 **Status: Komplettering krävs**\n\nDu har lämnat några frågor obesvarade eller med väldigt korta svar. För att bli godkänd behöver du förklara och utveckla dina resonemang lite mer noggrant nästa gång.`;
-    } else if (totalLength > 120 && filledCount === totalQuestions) {
-        autoPlupp = 'darkgreen';
-        autoFeedback = `🟢 **Status: Mörkgrön (Utmärkt)**\n\nMycket väl genomfört! Du förklarar med egna ord, har fyllt i alla delar och visar en djup förståelse för begreppen/ämnet.`;
+    // Framåtsyftande sammanfattning på slutet
+    let summaryComment = '';
+    if (redCount > 0) {
+        summaryComment = 'Framåtsyftande råd: Gå igenom de rödmarkerade frågorna och repetera begreppen inför nästa tillfälle.';
+    } else if (darkGreenCount >= greenCount) {
+        summaryComment = 'Framåtsyftande råd: Du har en mycket stark förståelse. Fortsätt att hålla samma höga kvalitet i dina motiveringar!';
     } else {
-        autoPlupp = 'lightgreen';
-        autoFeedback = `🟢 **Status: Ljusgrön (Godkänd)**\n\nBra jobbat! Du har besvarat alla frågor och visat att du behärskar grunderna. För att nå ännu högre kan du försöka ge fler konkreta exempel nästa gång.`;
+        summaryComment = 'Framåtsyftande råd: Du behärskar grunderna väl. Till nästa gång kan du utmana dig genom att förklara "varför" och ge fler exempel.';
     }
 
     const submission = {
@@ -545,8 +600,8 @@ async function handleExamSubmit(e) {
         status: 'Inlämnat',
         secondsSpent: state.examSeconds,
         warnings: state.warningCount,
-        gradeStatus: autoPlupp,
-        aiFeedback: autoFeedback,
+        questionResults: questionResults,
+        summaryComment: summaryComment,
         answers: state.answers
     };
 
@@ -563,20 +618,40 @@ function renderStudentResult(container) {
     const mins = Math.floor((sub.secondsSpent || state.examSeconds) / 60);
 
     container.innerHTML = `
-        <div class="max-w-xl mx-auto mt-8 bg-white p-8 rounded-2xl border border-slate-200 shadow-xl text-center space-y-6">
-            <div class="w-16 h-16 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto text-3xl">
-                <i class="fa-solid fa-circle-check"></i>
-            </div>
-            <div>
+        <div class="max-w-2xl mx-auto mt-6 bg-white p-6 sm:p-8 rounded-2xl border border-slate-200 shadow-xl space-y-6">
+            <div class="text-center space-y-2">
+                <div class="w-14 h-14 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto text-2xl">
+                    <i class="fa-solid fa-circle-check"></i>
+                </div>
                 <h2 class="text-2xl font-bold text-slate-900">Inlämning mottagen!</h2>
-                <p class="text-sm text-slate-600 mt-1">Tack <strong>${state.currentUser ? state.currentUser.name : 'Elev'}</strong>, din uppgift har registrerats.</p>
-                <p class="text-xs text-slate-400 font-mono mt-1">Tidsåtgång: ${mins} min ${state.warningCount > 0 ? '• Varningar: ' + state.warningCount : ''}</p>
+                <p class="text-xs text-slate-500">Tack ${sub.studentName || 'Elev'}! Tidsåtgång: ${mins} min ${state.warningCount > 0 ? '• Varningar: ' + state.warningCount : ''}</p>
             </div>
 
-            <!-- DIREKT FORMATIV FEEDBACK TILL ELEVEN -->
-            <div class="p-5 rounded-2xl bg-slate-50 border border-slate-200 text-left space-y-2">
-                <span class="text-xs font-bold text-slate-500 uppercase tracking-wider block">Din Feedback & Resultat:</span>
-                <div class="text-sm text-slate-800 whitespace-pre-line leading-relaxed font-medium">${sub.aiFeedback || 'Dina svar är inlämnade.'}</div>
+            <!-- RESPONS PER FRÅGA -->
+            <div class="space-y-4 pt-2">
+                <h3 class="text-xs font-bold uppercase tracking-wider text-slate-500">Din Respons per fråga:</h3>
+                ${(sub.questionResults || []).map(qR => {
+                    const pluppClass = qR.plupp === 'darkgreen' ? 'bg-emerald-700' : qR.plupp === 'red' ? 'bg-red-500' : 'bg-emerald-400';
+                    return `
+                        <div class="p-4 rounded-xl border border-slate-200 bg-slate-50 space-y-2">
+                            <div class="flex items-center justify-between">
+                                <span class="font-bold text-xs text-slate-600">Fråga ${qR.questionIdx}:${qR.questionText}</span>
+                                <span class="flex items-center space-x-1.5 text-xs font-bold text-slate-700">
+                                    <span class="w-3 h-3 rounded-full ${pluppClass}"></span>
+                                    <span>${qR.statusText}</span>
+                                </span>
+                            </div>
+                            <div class="p-2.5 bg-white rounded-lg border border-slate-200 text-xs text-slate-700"><strong>Ditt svar:</strong> ${qR.studentAnswer || 'Inget svar'}</div>
+                            <div class="text-xs text-slate-600 bg-amber-50 p-2.5 rounded-lg border border-amber-200"><strong>Vad du kunde svarat / Tänka på:</strong> ${qR.hintText}</div>
+                        </div>
+                    `;
+                }).join('')}
+            </div>
+
+            <!-- FRAMÅTSYFTANDE KOMMENTAR I SLUTET -->
+            <div class="p-4 rounded-xl bg-purple-50 border border-purple-200 text-xs text-purple-900 font-medium leading-relaxed">
+                <strong class="block text-purple-900 mb-1 font-bold">💬 Sammanfattning & Framåtsyftande kommentar:</strong>
+                ${sub.summaryComment || ''}
             </div>
 
             <button onclick="switchView('welcome')" class="w-full py-3 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl shadow-md transition">
@@ -728,7 +803,11 @@ async function updateProjectorLists() {
                     <span class="font-bold text-slate-200">${s.studentName}</span>
                     <div class="flex items-center space-x-2">
                         <span class="text-xs font-mono text-slate-400">${mins} min</span>
-                        <span class="w-3 h-3 rounded-full ${s.gradeStatus === 'darkgreen' ? 'bg-emerald-700' : s.gradeStatus === 'red' ? 'bg-red-500' : 'bg-emerald-400'}"></span>
+                        <div class="flex items-center space-x-1">
+                            ${(s.questionResults || []).map(qR => `
+                                <span class="w-2.5 h-2.5 rounded-full ${qR.plupp === 'darkgreen' ? 'bg-emerald-700' : qR.plupp === 'red' ? 'bg-red-500' : 'bg-emerald-400'}"></span>
+                            `).join('')}
+                        </div>
                     </div>
                 </div>
             `;
@@ -783,19 +862,14 @@ function renderAdminBoard(container, exams) {
                             <th class="p-4">Elev</th>
                             <th class="p-4">Status</th>
                             <th class="p-4">Tid</th>
-                            <th class="p-4">Varningar</th>
-                            <th class="p-4 text-center">Automatisk Plupp</th>
+                            <th class="p-4 text-center">Pluppar per fråga</th>
+                            <th class="p-4 text-right">Åtgärd</th>
                         </tr>
                     </thead>
                     <tbody class="divide-y divide-slate-200 text-sm">
                         ${subs.length === 0 ? '<tr><td colspan="5" class="p-6 text-center text-slate-400">Inga elever har lämnat in ännu.</td></tr>' : ''}
                         ${subs.map(s => {
                             const mins = Math.floor((s.secondsSpent || 0) / 60);
-                            const pluppColor = s.gradeStatus === 'darkgreen' ? 'bg-emerald-700 hover:bg-emerald-800' :
-                                              s.gradeStatus === 'red' ? 'bg-red-500 hover:bg-red-600' : 'bg-emerald-400 hover:bg-emerald-500';
-                            
-                            const pluppText = s.gradeStatus === 'darkgreen' ? 'Mörkgrön (Utmärkt)' :
-                                             s.gradeStatus === 'red' ? 'Röd (Komplettering)' : 'Ljusgrön (Godkänd)';
 
                             return `
                                 <tr class="hover:bg-slate-50">
@@ -804,11 +878,17 @@ function renderAdminBoard(container, exams) {
                                     </td>
                                     <td class="p-4"><span class="px-2.5 py-1 text-xs font-semibold rounded-full bg-emerald-100 text-emerald-800">${s.status || 'Inlämnat'}</span></td>
                                     <td class="p-4 font-mono text-xs text-slate-500">${mins} min</td>
-                                    <td class="p-4 text-xs font-semibold ${s.warnings > 0 ? 'text-amber-600' : 'text-slate-400'}">${s.warnings || 0} st</td>
                                     <td class="p-4 text-center">
-                                        <button onclick="cyclePluppStatus('${s.id}')" title="Klicka för att manuellt ändra plupp" class="inline-flex items-center space-x-2 px-3.5 py-1.5 rounded-full text-xs font-bold text-white transition shadow-sm ${pluppColor}">
-                                            <span class="w-2.5 h-2.5 rounded-full bg-white/80"></span>
-                                            <span>${pluppText}</span>
+                                        <div class="flex items-center justify-center space-x-1.5">
+                                            ${(s.questionResults || []).map((qR, qIdx) => {
+                                                const pColor = qR.plupp === 'darkgreen' ? 'bg-emerald-700' : qR.plupp === 'red' ? 'bg-red-500' : 'bg-emerald-400';
+                                                return `<span title="Fråga ${qIdx + 1}: ${qR.statusText}" class="w-3.5 h-3.5 rounded-full ${pColor} shadow-sm inline-block"></span>`;
+                                            }).join('')}
+                                        </div>
+                                    </td>
+                                    <td class="p-4 text-right">
+                                        <button onclick="confirmResetSubmission('${s.id}', '${s.studentName}')" class="px-3 py-1.5 bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 font-semibold text-xs rounded-lg transition">
+                                            Ångra inlämningen
                                         </button>
                                     </td>
                                 </tr>
@@ -821,16 +901,14 @@ function renderAdminBoard(container, exams) {
     `;
 }
 
-async function cyclePluppStatus(subId) {
-    const exam = state.cachedExams.find(e => e.id === state.selectedExamId);
-    if (!exam || !exam.submissions) return;
-    const sub = exam.submissions.find(s => s.id === subId);
-    if (sub) {
-        const order = ['lightgreen', 'darkgreen', 'red'];
-        const currentIdx = order.indexOf(sub.gradeStatus || 'lightgreen');
-        sub.gradeStatus = order[(currentIdx + 1) % order.length];
-        await saveExamToDB(exam);
-        render();
+async function confirmResetSubmission(subId, studentName) {
+    if (confirm(`ÄR DU SÄKER?\n\nVill du verkligen ångra inlämningen för ${studentName}?\nAlla svar för eleven raderas och eleven kan starta om uppgiften.`)) {
+        const exam = state.cachedExams.find(e => e.id === state.selectedExamId);
+        if (exam && exam.submissions) {
+            exam.submissions = exam.submissions.filter(s => s.id !== subId);
+            await saveExamToDB(exam);
+            render();
+        }
     }
 }
 
@@ -852,14 +930,19 @@ function openStudentDetailModal(subId) {
             </div>
 
             <div class="space-y-4">
-                ${(exam.questions || []).map((q, idx) => {
-                    const ans = sub.answers ? sub.answers['q_' + idx] : 'Inget svar';
+                ${(sub.questionResults || []).map(qR => {
+                    const pluppClass = qR.plupp === 'darkgreen' ? 'bg-emerald-700' : qR.plupp === 'red' ? 'bg-red-500' : 'bg-emerald-400';
                     return `
                         <div class="p-4 rounded-xl border border-slate-200 bg-slate-50 space-y-2">
-                            <span class="font-bold text-xs text-slate-500">Fråga/Begrepp ${idx + 1}</span>
-                            <h4 class="font-bold text-slate-800 text-sm">${q.text}</h4>${q.explanation ? `<div class="text-xs text-slate-600 bg-slate-100 p-2 rounded-lg"><strong>Förklaring:</strong> ${q.explanation}</div>` : ''}
-                            ${q.criteria ? `<div class="text-xs text-amber-800 bg-amber-50 p-2 rounded-lg border border-amber-200"><strong>Bedömningskriterier (E,C,A):</strong> ${q.criteria}</div>` : ''}
-                            <div class="p-3 bg-white rounded-lg border border-slate-200 text-xs font-mono text-slate-700 whitespace-pre-wrap">${ans || 'Inget svar'}</div>
+                            <div class="flex items-center justify-between">
+                                <span class="font-bold text-xs text-slate-600">Fråga ${qR.questionIdx}:${qR.questionText}</span>
+                                <span class="flex items-center space-x-1.5 text-xs font-bold text-slate-700">
+                                    <span class="w-3 h-3 rounded-full ${pluppClass}"></span>
+                                    <span>${qR.statusText}</span>
+                                </span>
+                            </div>
+                            <div class="p-3 bg-white rounded-lg border border-slate-200 text-xs font-mono text-slate-700 whitespace-pre-wrap">${qR.studentAnswer || 'Inget svar'}</div>
+                            <div class="text-xs text-slate-600 bg-amber-50 p-2.5 rounded-lg border border-amber-200"><strong>Kunde svarat / Tänka på:</strong> ${qR.hintText}</div>
                         </div>
                     `;
                 }).join('')}
@@ -869,7 +952,7 @@ function openStudentDetailModal(subId) {
                 <span class="text-xs font-bold text-purple-800 uppercase flex items-center gap-1.5">
                     <i class="fa-solid fa-wand-magic-sparkles"></i> Respons som gavs till eleven vid inlämning
                 </span>
-                <div class="p-3 bg-white rounded-lg border border-purple-200 text-xs text-slate-800 whitespace-pre-line leading-relaxed font-medium">${sub.aiFeedback || 'Ingen feedback.'}</div>
+                <div class="p-3 bg-white rounded-lg border border-purple-200 text-xs text-slate-800 whitespace-pre-line leading-relaxed font-medium">${sub.summaryComment || 'Ingen feedback.'}</div>
             </div>
         </div>
     `;
