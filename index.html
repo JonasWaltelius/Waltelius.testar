@@ -46,7 +46,7 @@
             </div>
             <h3 class="text-xl font-bold text-slate-900 mb-2" id="warningTitle">Varning: Du lämnade sidan!</h3>
             <p class="text-sm text-slate-600 mb-6" id="warningMessage">
-                Du lämnade provfönstret eller försökte lämna helskärm. Detta registreras i systemet.
+                Du lämnade provfönstret. Detta registreras i systemet.
             </p>
             <button onclick="closeWarningModal()" class="w-full py-3 bg-amber-600 hover:bg-amber-700 text-white font-semibold rounded-xl shadow-md transition">
                 Jag förstår, återgå till provet
@@ -85,7 +85,7 @@
             </div>
         </div>
 
-        <!-- REALTIDSSTATUS PÅ SKÄRM -->
+        <!-- REALTIDSSTATUS PÅ SKÄRM (ENBART NAMN & KORT, INGA PLUPPAR/BEDÖMNINGAR) -->
         <div class="grid grid-cols-1 md:grid-cols-2 gap-6 flex-1">
             <div class="bg-slate-800/60 rounded-2xl p-5 border border-slate-700/60">
                 <h3 class="text-lg font-bold text-amber-400 mb-4 flex items-center gap-2">
@@ -129,7 +129,6 @@ const state = {
     isSubmitting: false
 };
 
-// HELSKÄRMSHANTERING OCH LÅS
 function enterFullScreen() {
     try {
         const docEl = document.documentElement;
@@ -147,19 +146,6 @@ function exitFullScreen() {
             else if (document.msExitFullscreen) document.msExitFullscreen();
         }
     } catch(e) {}
-}
-
-// Lås helskärm under provets gång - tvinga tillbaka om eleven försöker swipa bort
-document.addEventListener('fullscreenchange', handleFullscreenLock);
-document.addEventListener('webkitfullscreenchange', handleFullscreenLock);
-
-function handleFullscreenLock() {
-    if (state.view === 'student_exam' && !state.isSubmitting) {
-        if (!document.fullscreenElement && !document.webkitFullscreenElement) {
-            enterFullScreen();
-            triggerCheatWarning();
-        }
-    }
 }
 
 function switchView(targetView) {
@@ -317,7 +303,6 @@ function closeWarningModal() {
         exitFullScreen();
         goHome();
     } else {
-        enterFullScreen();
         startTimer();
     }
 }
@@ -431,14 +416,12 @@ function handleWelcomeSubmit(e) {
 
     const originalExam = state.cachedExams.find(ex => ex.id === examId);
 
-    // ENHETSSPÄRR MOT DUBBLA INLÄMNINGAR (Kopplad till denna enhet i localStorage)
     const deviceSubmittedKey = `submitted_device_${examId}`;
     if (localStorage.getItem(deviceSubmittedKey)) {
         alert("Denna enhet har redan skickat in ett svar på den här uppgiften! Om du behöver göra om uppgiften måste din lärare trycka på 'Ångra inlämningen' i översikten.");
         return;
     }
 
-    // Namnspärr
     const hasAlreadySubmitted = (originalExam.submissions || []).some(s => s.studentName.toLowerCase() === name.toLowerCase());
     if (hasAlreadySubmitted) {
         alert("En elev med detta namn har redan lämnat in denna uppgift! Om du vill göra om den, kontakta din lärare.");
@@ -554,7 +537,6 @@ function renderStudentExam(container) {
     `;
 }
 
-// DJUPGÅENDE AI-UTVÄRDERINGS- OCH ANALYSLOGIK
 function evaluateStudentAnswer(studentAnswer, questionCriteria, questionExplanation, questionText) {
     const ans = (studentAnswer || '').trim();
     const lowerAns = ans.toLowerCase();
@@ -575,7 +557,6 @@ function evaluateStudentAnswer(studentAnswer, questionCriteria, questionExplanat
         };
     }
 
-    // Om läraren uppgett kriterier, analysera nyckelord och innehåll
     if (questionCriteria && questionCriteria.trim() !== '') {
         const criteriaKeywords = questionCriteria.toLowerCase().split(/[\s,.-]+/).filter(w => w.length > 3);
         const matchCount = criteriaKeywords.filter(kw => lowerAns.includes(kw)).length;
@@ -602,7 +583,6 @@ function evaluateStudentAnswer(studentAnswer, questionCriteria, questionExplanat
         }
     }
 
-    // Automatisk analys utan explicita kriterier
     if (ans.length >= 80) {
         return {
             plupp: 'darkgreen',
@@ -626,7 +606,6 @@ async function handleExamSubmit(e) {
 
     const exam = state.activeExam;
 
-    // Sätt enhetsspärren i localStorage för denna enhet
     localStorage.setItem(`submitted_device_${exam.id}`, 'true');
 
     if (exam.activeStudents) {
@@ -836,6 +815,7 @@ function closeProjectorModal() {
     document.getElementById('projectorModal').classList.add('hidden');
 }
 
+// "VISA PÅ SKÄRM" - RENA LISTOR UTAN PLUPPAR/BEDÖMNINGAR
 async function updateProjectorLists() {
     const exams = await getExams();
     const exam = exams.find(e => e.id === state.selectedExamId);
@@ -874,14 +854,7 @@ async function updateProjectorLists() {
             return `
                 <div class="flex items-center justify-between p-3 rounded-xl bg-slate-800 border border-slate-700/80 text-sm">
                     <span class="font-bold text-slate-200">${s.studentName}</span>
-                    <div class="flex items-center space-x-2">
-                        <span class="text-xs font-mono text-slate-400">${mins} min</span>
-                        <div class="flex items-center space-x-1">
-                            ${(s.questionResults || []).map(qR => `
-                                <span class="w-2.5 h-2.5 rounded-full ${qR.plupp === 'darkgreen' ? 'bg-emerald-700' : qR.plupp === 'red' ? 'bg-red-500' : 'bg-emerald-400'}"></span>
-                            `).join('')}
-                        </div>
-                    </div>
+                    <span class="text-xs font-mono text-slate-400">${mins} min</span>
                 </div>
             `;
         }).join('');
@@ -978,7 +951,6 @@ async function confirmResetSubmission(subId, studentName) {
     if (confirm(`ÄR DU SÄKER?\n\nVill du verkligen ångra inlämningen för ${studentName}?\nAlla svar för eleven raderas, enhetsspärren hävs och eleven kan starta om uppgiften.`)) {
         const exam = state.cachedExams.find(e => e.id === state.selectedExamId);
         if (exam) {
-            // Rensa enhetslåsningen i localStorage
             localStorage.removeItem(`submitted_device_${exam.id}`);
 
             if (exam.submissions) {
