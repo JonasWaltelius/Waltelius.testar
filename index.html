@@ -54,13 +54,33 @@
         </div>
     </div>
 
-    <!-- SVÄVANDE POPUP FÖR ELEVSVAR & AI-RESPONS -->
+    <!-- SVÄVANDE POPUP FÖR ELEVSVAR & RESPONS -->
     <div id="studentDetailModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden" onclick="closeStudentDetailModal()">
         <div class="bg-white rounded-2xl shadow-2xl max-w-2xl w-full max-h-[85vh] overflow-y-auto p-6 sm:p-8 relative" onclick="event.stopPropagation()">
             <button onclick="closeStudentDetailModal()" class="absolute top-4 right-4 w-9 h-9 rounded-full bg-slate-100 text-slate-500 hover:bg-slate-200 flex items-center justify-center text-lg">
                 <i class="fa-solid fa-xmark"></i>
             </button>
             <div id="studentDetailContent"></div>
+        </div>
+    </div>
+
+    <!-- HELSKÄRMSLÄGE: VISA PÅ SKÄRM (PROJEKTOR) -->
+    <div id="projectorModal" class="fixed inset-0 bg-slate-900 z-50 flex flex-col items-center justify-center p-8 text-white hidden">
+        <button onclick="closeProjectorModal()" class="absolute top-6 right-6 text-slate-400 hover:text-white text-3xl">
+            <i class="fa-solid fa-xmark"></i>
+        </button>
+        <div class="text-center space-y-8 max-w-3xl">
+            <span class="px-4 py-1.5 bg-red-600/30 text-red-400 font-bold uppercase tracking-widest text-sm rounded-full border border-red-500/30">
+                Aktiv Uppgift
+            </span>
+            <h2 id="projTitle" class="text-4xl sm:text-6xl font-black tracking-tight"></h2>
+            <p id="projSub" class="text-slate-400 text-lg sm:text-2xl font-medium"></p>
+            
+            <div class="pt-6">
+                <div class="text-xs uppercase font-bold text-slate-400 tracking-widest mb-3">Ange Provkod för att starta</div>
+                <div id="projCode" class="text-6xl sm:text-8xl font-mono font-black text-red-500 bg-white/5 py-6 px-12 rounded-3xl border border-white/10 shadow-2xl inline-block tracking-widest">
+                </div>
+            </div>
         </div>
     </div>
 
@@ -83,7 +103,8 @@ const state = {
     showArchive: false,
     examTimer: null,
     examSeconds: 0,
-    warningCount: 0
+    warningCount: 0,
+    revealedCodes: {}
 };
 
 function switchView(targetView) {
@@ -157,7 +178,6 @@ async function saveExamToDB(exam) {
 async function deleteExamFromDB(examId) {
     localExamsFallback = localExamsFallback.filter(e => e.id !== examId);
     localStorage.setItem('waltelius_local_exams', JSON.stringify(localExamsFallback));
-
     state.cachedExams = state.cachedExams.filter(e => e.id !== examId);
 
     if (db) {
@@ -417,6 +437,23 @@ async function handleExamSubmit(e) {
     e.preventDefault();
     stopTimer();
     const exam = state.activeExam;
+
+    // Automatiskt skapande av AI & Lärarrespons direkt vid inlämning
+    let autoFeedback = `Snyggt jobbat ${state.currentUser.name}! Du har slutfört uppgiften. `;
+    let customCriteriaNotes = [];
+
+    (exam.questions || []).forEach((q, idx) => {
+        const studentAns = state.answers['q_' + idx] || '';
+        if (q.criteria && q.criteria.trim() !== '') {
+            customCriteriaNotes.push(`Fråga ${idx + 1}: ${q.criteria}`);
+        }
+    });
+
+    if (customCriteriaNotes.length > 0) {
+        autoFeedback += `Dina svar har stämts av mot följande mål/mallen:\n• ` + customCriteriaNotes.join('\n• ');
+    } else {
+        autoFeedback += `Dina svar är registrerade. Tänk på att alltid utveckla dina resonemang med tydliga exempel och förklaringar till nästa gång.`;
+    }
     
     const submission = {
         id: 'sub-' + Date.now(),
@@ -426,8 +463,8 @@ async function handleExamSubmit(e) {
         status: 'Inlämnat',
         secondsSpent: state.examSeconds,
         warnings: state.warningCount,
-        gradeStatus: 'grey', // grey, yellow, green, red
-        aiFeedback: '',
+        gradeStatus: 'lightgreen', // lightgreen, darkgreen, red
+        aiFeedback: autoFeedback,
         answers: state.answers
     };
 
@@ -466,7 +503,7 @@ function renderAdmin(container, exams) {
             <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
                 <div>
                     <h2 class="text-2xl font-bold text-slate-900">${isArchive ? 'Arkiverade Uppgifter' : 'Testpanelen & Hantering'}</h2>
-                    <p class="text-xs text-slate-500 mt-1">Klicka på "Aktivera" för att göra ett prov synligt för eleverna.</p>
+                    <p class="text-xs text-slate-500 mt-1">Klicka på koden för att visa/dölja den. Klicka på "Visa på skärm" för projektorläge.</p>
                 </div>
                 <div class="flex items-center space-x-2">
                     <button onclick="state.showArchive = !state.showArchive; render();" class="px-4 py-2.5 bg-slate-100 text-slate-700 font-bold rounded-xl text-xs">
@@ -482,37 +519,67 @@ function renderAdmin(container, exams) {
 
             <div class="bg-white rounded-2xl border border-slate-200 p-4 divide-y divide-slate-200">
                 ${filteredExams.length === 0 ? `<div class="p-6 text-center text-slate-400">${isArchive ? 'Arkivet är tomt.' : 'Inga uppgifter. Skapa en ny ovan!'}</div>` : ''}
-                ${filteredExams.map(e => `
-                    <div class="py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                        <div>
-                            <div class="font-bold text-slate-900">${e.title || 'Utan titel'}</div>
-                            <div class="text-xs text-slate-500 mt-0.5">
-                                ${e.type} • ${e.category} • Klass ${e.klass} • Kod: <span class="font-mono font-bold text-red-600">${e.code}</span> • 
-                                <span class="font-semibold ${e.active ? 'text-emerald-600' : 'text-slate-400'}">${e.active ? 'Aktiv' : 'Inaktiv'}</span>
+                ${filteredExams.map(e => {
+                    const isCodeRevealed = !!state.revealedCodes[e.id];
+                    const displayCode = isCodeRevealed ? e.code : '****';
+
+                    return `
+                        <div class="py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                            <div>
+                                <div class="font-bold text-slate-900">${e.title || 'Utan titel'}</div>
+                                <div class="text-xs text-slate-500 mt-0.5">
+                                    ${e.type} • ${e.category} • Klass ${e.klass} • Kod: 
+                                    <span onclick="toggleCodeHide('${e.id}')" title="Klicka för att visa/dölja koden" class="font-mono font-bold text-red-600 cursor-pointer bg-red-50 px-2 py-0.5 rounded border border-red-200">
+                                        ${displayCode} <i class="fa-solid ${isCodeRevealed ? 'fa-eye-slash' : 'fa-eye'} text-[10px] ml-1"></i>
+                                    </span> • 
+                                    <span class="font-semibold ${e.active ? 'text-emerald-600' : 'text-slate-400'}">${e.active ? 'Aktiv' : 'Inaktiv'}</span>
+                                </div>
+                            </div>
+                            <div class="flex items-center space-x-1.5 flex-wrap gap-y-1">
+                                <button onclick="openProjectorModal('${e.id}')" title="Visa stor kod på projektor" class="px-2.5 py-1.5 bg-purple-50 text-purple-700 border border-purple-200 font-bold rounded-lg text-xs">
+                                    <i class="fa-solid fa-desktop mr-1"></i> Visa på skärm
+                                </button>
+                                <button onclick="toggleActive('${e.id}')" class="px-3 py-1.5 text-xs font-bold rounded-lg border ${e.active ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-emerald-600 text-white shadow-sm'}">
+                                    ${e.active ? 'Inaktivera' : 'Aktivera nu!'}
+                                </button>
+                                <button onclick="goToBoard('${e.id}')" class="px-2.5 py-1.5 bg-slate-100 text-slate-700 font-semibold rounded-lg text-xs">
+                                    Översikt
+                                </button>
+                                <button onclick="openEditExam('${e.id}')" class="px-2.5 py-1.5 bg-slate-100 text-slate-700 font-semibold rounded-lg text-xs">
+                                    Redigera
+                                </button>
+                                <button onclick="toggleArchive('${e.id}')" class="px-2.5 py-1.5 bg-amber-50 text-amber-700 border border-amber-200 font-semibold rounded-lg text-xs">
+                                    ${e.archived ? 'Återställ' : 'Arkivera'}
+                                </button>
+                                <button onclick="confirmDeleteExam('${e.id}', '${e.title}')" class="px-2.5 py-1.5 bg-red-50 text-red-600 border border-red-200 font-semibold rounded-lg text-xs">
+                                    Radera
+                                </button>
                             </div>
                         </div>
-                        <div class="flex items-center space-x-1.5">
-                            <button onclick="toggleActive('${e.id}')" class="px-3 py-1.5 text-xs font-bold rounded-lg border ${e.active ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-emerald-600 text-white shadow-sm'}">
-                                ${e.active ? 'Inaktivera' : 'Aktivera nu!'}
-                            </button>
-                            <button onclick="goToBoard('${e.id}')" class="px-2.5 py-1.5 bg-slate-100 text-slate-700 font-semibold rounded-lg text-xs">
-                                Översikt
-                            </button>
-                            <button onclick="openEditExam('${e.id}')" class="px-2.5 py-1.5 bg-slate-100 text-slate-700 font-semibold rounded-lg text-xs">
-                                Redigera
-                            </button>
-                            <button onclick="toggleArchive('${e.id}')" class="px-2.5 py-1.5 bg-amber-50 text-amber-700 border border-amber-200 font-semibold rounded-lg text-xs">
-                                ${e.archived ? 'Återställ' : 'Arkivera'}
-                            </button>
-                            <button onclick="confirmDeleteExam('${e.id}', '${e.title}')" class="px-2.5 py-1.5 bg-red-50 text-red-600 border border-red-200 font-semibold rounded-lg text-xs">
-                                Radera
-                            </button>
-                        </div>
-                    </div>
-                `).join('')}
+                    `;
+                }).join('')}
             </div>
         </div>
     `;
+}
+
+function toggleCodeHide(id) {
+    state.revealedCodes[id] = !state.revealedCodes[id];
+    render();
+}
+
+function openProjectorModal(id) {
+    const exam = state.cachedExams.find(e => e.id === id) || localExamsFallback.find(e => e.id === id);
+    if (!exam) return;
+
+    document.getElementById('projTitle').innerText = exam.title;
+    document.getElementById('projSub').innerText = `${exam.type} • ${exam.category} • Klass ${exam.klass}`;
+    document.getElementById('projCode').innerText = exam.code;
+    document.getElementById('projectorModal').classList.remove('hidden');
+}
+
+function closeProjectorModal() {
+    document.getElementById('projectorModal').classList.add('hidden');
 }
 
 async function confirmDeleteExam(id, title) {
@@ -552,20 +619,20 @@ function renderAdminBoard(container, exams) {
                             <th class="p-4">Status</th>
                             <th class="p-4">Tid</th>
                             <th class="p-4">Varningar</th>
-                            <th class="p-4 text-center">Bedömning (Plupp)</th>
+                            <th class="p-4 text-center">Bedömningsplupp</th>
                         </tr>
                     </thead>
                     <tbody class="divide-y divide-slate-200 text-sm">
                         ${subs.length === 0 ? '<tr><td colspan="5" class="p-6 text-center text-slate-400">Inga elever har lämnat in ännu.</td></tr>' : ''}
                         ${subs.map(s => {
                             const mins = Math.floor((s.secondsSpent || 0) / 60);
-                            const pluppColor = s.gradeStatus === 'green' ? 'bg-emerald-500 hover:bg-emerald-600' :
-                                              s.gradeStatus === 'yellow' ? 'bg-amber-400 hover:bg-amber-500' :
-                                              s.gradeStatus === 'red' ? 'bg-red-500 hover:bg-red-600' : 'bg-slate-300 hover:bg-slate-400';
                             
-                            const pluppText = s.gradeStatus === 'green' ? 'Godkänd / Klar' :
-                                             s.gradeStatus === 'yellow' ? 'Under granskning' :
-                                             s.gradeStatus === 'red' ? 'Komplettering' : 'Ej påbörjad';
+                            // Tre färger: Ljusgrön, Mörkgrön, Röd
+                            const pluppColor = s.gradeStatus === 'darkgreen' ? 'bg-emerald-700 hover:bg-emerald-800' :
+                                              s.gradeStatus === 'red' ? 'bg-red-500 hover:bg-red-600' : 'bg-emerald-400 hover:bg-emerald-500';
+                            
+                            const pluppText = s.gradeStatus === 'darkgreen' ? 'Mörkgrön (Utmärkt)' :
+                                             s.gradeStatus === 'red' ? 'Röd (Komplettering)' : 'Ljusgrön (Godkänd)';
 
                             return `
                                 <tr class="hover:bg-slate-50">
@@ -576,7 +643,7 @@ function renderAdminBoard(container, exams) {
                                     <td class="p-4 font-mono text-xs text-slate-500">${mins} min</td>
                                     <td class="p-4 text-xs font-semibold ${s.warnings > 0 ? 'text-amber-600' : 'text-slate-400'}">${s.warnings || 0} st</td>
                                     <td class="p-4 text-center">
-                                        <button onclick="cyclePluppStatus('${s.id}')" title="Klicka för att skifta status" class="inline-flex items-center space-x-2 px-3 py-1.5 rounded-full text-xs font-bold text-white transition shadow-sm ${pluppColor}">
+                                        <button onclick="cyclePluppStatus('${s.id}')" title="Klicka för att skifta mellan Ljusgrön, Mörkgrön och Röd" class="inline-flex items-center space-x-2 px-3.5 py-1.5 rounded-full text-xs font-bold text-white transition shadow-sm ${pluppColor}">
                                             <span class="w-2.5 h-2.5 rounded-full bg-white/80"></span>
                                             <span>${pluppText}</span>
                                         </button>
@@ -596,8 +663,9 @@ async function cyclePluppStatus(subId) {
     if (!exam || !exam.submissions) return;
     const sub = exam.submissions.find(s => s.id === subId);
     if (sub) {
-        const order = ['grey', 'yellow', 'green', 'red'];
-        const currentIdx = order.indexOf(sub.gradeStatus || 'grey');
+        // Skiftar mellan Ljusgrön -> Mörkgrön -> Röd
+        const order = ['lightgreen', 'darkgreen', 'red'];
+        const currentIdx = order.indexOf(sub.gradeStatus || 'lightgreen');
         sub.gradeStatus = order[(currentIdx + 1) % order.length];
         await saveExamToDB(exam);
         render();
@@ -616,7 +684,7 @@ function openStudentDetailModal(subId) {
     content.innerHTML = `
         <div class="space-y-6">
             <div>
-                <span class="text-xs font-bold text-red-600 uppercase tracking-wider">Elevsvar</span>
+                <span class="text-xs font-bold text-red-600 uppercase tracking-wider">Elevsvar & Respons</span>
                 <h2 class="text-2xl font-bold text-slate-900">${sub.studentName}</h2>
                 <p class="text-xs text-slate-500">${exam.title} • Inlämnad: ${sub.submittedAt || ''} • Tid: ${mins} min</p>
             </div>
@@ -627,7 +695,7 @@ function openStudentDetailModal(subId) {
                     return `
                         <div class="p-4 rounded-xl border border-slate-200 bg-slate-50 space-y-2">
                             <span class="font-bold text-xs text-slate-500">Fråga ${idx + 1}</span>
-                            <h4 class="font-bold text-slate-800 text-sm">${q.text}</h4>${q.criteria ? `<div class="text-xs text-amber-700 bg-amber-50 p-2 rounded border border-amber-200"><strong>Bedömningskriterie:</strong> ${q.criteria}</div>` : ''}
+                            <h4 class="font-bold text-slate-800 text-sm">${q.text}</h4>${q.criteria ? `<div class="text-xs text-amber-800 bg-amber-50 p-2 rounded-lg border border-amber-200"><strong>Lärarmall/Kriterie:</strong> ${q.criteria}</div>` : ''}
                             <div class="p-3 bg-white rounded-lg border border-slate-200 text-xs font-mono text-slate-700 whitespace-pre-wrap">${ans || 'Inget svar'}</div>
                         </div>
                     `;
@@ -635,46 +703,16 @@ function openStudentDetailModal(subId) {
             </div>
 
             <div class="p-4 rounded-xl bg-purple-50 border border-purple-200 space-y-3">
-                <div class="flex items-center justify-between">
-                    <span class="text-xs font-bold text-purple-800 uppercase flex items-center gap-1.5">
-                        <i class="fa-solid fa-wand-magic-sparkles"></i> AI-Genererad Respons & Feedback
-                    </span>
-                    <button onclick="generateAIFeedback('${sub.id}')" class="px-3 py-1 bg-purple-600 hover:bg-purple-700 text-white font-bold text-xs rounded-lg shadow-sm">
-                        Generera AI-förslag
-                    </button>
-                </div>
-                <textarea id="aiFeedbackArea" rows="3" placeholder="Klicka på knappen ovan för att skapa ett automatiskt responsförslag baserat på elevens svar och kriterier..." 
+                <span class="text-xs font-bold text-purple-800 uppercase flex items-center gap-1.5">
+                    <i class="fa-solid fa-wand-magic-sparkles"></i> AI- & Lärarrespons (Genererad vid inlämning)
+                </span>
+                <textarea id="aiFeedbackArea" rows="4" 
                     onchange="saveAIFeedback('${sub.id}', this.value)"
-                    class="w-full p-3 rounded-lg border border-purple-200 text-xs bg-white text-slate-800 outline-none">${sub.aiFeedback || ''}</textarea>
+                    class="w-full p-3 rounded-lg border border-purple-200 text-xs bg-white text-slate-800 outline-none leading-relaxed">${sub.aiFeedback || ''}</textarea>
             </div>
         </div>
     `;
     document.getElementById('studentDetailModal').classList.remove('hidden');
-}
-
-function generateAIFeedback(subId) {
-    const exam = state.cachedExams.find(e => e.id === state.selectedExamId);
-    if (!exam || !exam.submissions) return;
-    const sub = exam.submissions.find(s => s.id === subId);
-    if (!sub) return;
-
-    const area = document.getElementById('aiFeedbackArea');
-    if (area) {
-        area.value = "Genererar förslag...";
-    }
-
-    setTimeout(async () => {
-        let feedback = `Bra jobbat ${sub.studentName}! Du visar förståelse för uppgiften. `;
-        const hasEmpty = Object.values(sub.answers || {}).some(v => !v || v.trim() === '');
-        if (hasEmpty) {
-            feedback += "Tänk på att utveckla dina resonemang lite mer på de frågor där du skrivit korta svar.";
-        } else {
-            feedback += "Dina svar är välformulerade och täcker in de viktigaste begreppen.";
-        }
-        sub.aiFeedback = feedback;
-        if (area) area.value = feedback;
-        await saveExamToDB(exam);
-    }, 600);
 }
 
 async function saveAIFeedback(subId, val) {
