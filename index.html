@@ -54,6 +54,16 @@
         </div>
     </div>
 
+    <!-- SVÄVANDE POPUP FÖR ELEVSVAR -->
+    <div id="studentDetailModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden" onclick="closeStudentDetailModal(event)">
+        <div class="bg-white rounded-2xl shadow-2xl max-w-2xl w-full max-h-[85vh] overflow-y-auto p-6 sm:p-8 relative" onclick="event.stopPropagation()">
+            <button onclick="closeStudentDetailModal()" class="absolute top-4 right-4 w-9 h-9 rounded-full bg-slate-100 text-slate-500 hover:bg-slate-200 flex items-center justify-center text-lg">
+                <i class="fa-solid fa-xmark"></i>
+            </button>
+            <div id="studentDetailContent"></div>
+        </div>
+    </div>
+
 <script>
 const SUPABASE_URL = 'https://omjeuavtqdrktxohmebm.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9tamV1YXZ0cWRya3R4b2htZWJtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDEyNjkwMDAsImV4cCI6MjA1Njg0NTAwMH0.1_R5aR_u8-zN6lX_3-90d-_0';
@@ -86,6 +96,15 @@ function goHome() {
     stopTimer();
     state.view = 'welcome';
     render();
+}
+
+function shuffleArray(array) {
+    const arr = [...array];
+    for (let i = arr.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+    return arr;
 }
 
 function validateStudentName(name) {
@@ -307,8 +326,21 @@ function handleWelcomeSubmit(e) {
     const klass = document.getElementById('studentClass').value;
     const examId = document.getElementById('studentExamSelect').value;
 
+    const originalExam = state.cachedExams.find(ex => ex.id === examId);
+    
+    // Slumpa svarsalternativen för flervalsfrågor unikt för denna elev
+    const preparedQuestions = (originalExam.questions || []).map(q => {
+        if (q.type === 'mc' && q.options) {
+            return {
+                ...q,
+                shuffledOptions: shuffleArray(q.options)
+            };
+        }
+        return q;
+    });
+
     state.currentUser = { name, class: klass };
-    state.activeExam = state.cachedExams.find(ex => ex.id === examId);
+    state.activeExam = { ...originalExam, questions: preparedQuestions };
     switchView('student_code');
 }
 
@@ -373,14 +405,34 @@ function renderStudentExam(container) {
 
             <form onsubmit="handleExamSubmit(event)" class="space-y-6">
                 ${questions.length === 0 ? '<div class="bg-white p-6 rounded-2xl border text-center text-slate-400">Denna uppgift saknar frågor än så länge.</div>' : ''}
-                ${questions.map((q, idx) => `
-                    <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-3">
-                        <div class="text-xs font-bold text-red-600">Fråga ${idx + 1}</div>
-                        <h3 class="text-base font-bold text-slate-900">${q.text || 'Läs frågan'}</h3>
-                        <textarea required onchange="state.answers['q_${idx}'] = this.value" rows="4" 
-                            placeholder="Skriv ditt svar här..." class="w-full p-3.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-red-500 outline-none text-sm"></textarea>
-                    </div>
-                `).join('')}
+                ${questions.map((q, idx) => {
+                    if (q.type === 'mc') {
+                        const opts = q.shuffledOptions || q.options || [];
+                        return `
+                            <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-3">
+                                <div class="text-xs font-bold text-red-600">Fråga ${idx + 1} (Flerval)</div>
+                                <h3 class="text-base font-bold text-slate-900">${q.text}</h3>
+                                <div class="space-y-2 pt-1">
+                                    ${opts.map(opt => `
+                                        <label class="flex items-center p-3 rounded-xl border border-slate-200 hover:bg-slate-50 cursor-pointer">
+                                            <input type="radio" name="q_${idx}" value="${opt}" onchange="state.answers['q_${idx}'] = this.value" required class="w-4 h-4 text-red-600">
+                                            <span class="ml-3 text-sm text-slate-700">${opt}</span>
+                                        </label>
+                                    `).join('')}
+                                </div>
+                            </div>
+                        `;
+                    } else {
+                        return `
+                            <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-3">
+                                <div class="text-xs font-bold text-red-600">Fråga ${idx + 1}</div>
+                                <h3 class="text-base font-bold text-slate-900">${q.text || 'Läs frågan'}</h3>
+                                <textarea required onchange="state.answers['q_${idx}'] = this.value" rows="4" 
+                                    placeholder="Skriv ditt svar här..." class="w-full p-3.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-red-500 outline-none text-sm"></textarea>
+                            </div>
+                        `;
+                    }
+                }).join('')}
 
                 <button type="submit" class="w-full py-3.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl shadow-lg transition">
                     Lämna in svar
@@ -527,8 +579,8 @@ function renderAdminBoard(container, exams) {
                             const mins = Math.floor((s.secondsSpent || 0) / 60);
                             return `
                                 <tr class="hover:bg-slate-50">
-                                    <td class="p-4 font-bold text-slate-900">
-                                        ${s.studentName}
+                                    <td class="p-4 font-bold text-slate-900 cursor-pointer text-red-600 hover:underline" onclick="openStudentDetailModal('${s.id}')">
+                                        ${s.studentName} <i class="fa-solid fa-circle-info text-xs ml-1 opacity-60"></i>
                                     </td>
                                     <td class="p-4"><span class="px-2.5 py-1 text-xs font-semibold rounded-full bg-emerald-100 text-emerald-800">${s.status || 'Inlämnat'}</span></td>
                                     <td class="p-4 font-mono text-xs text-slate-500">${mins} min</td>
@@ -557,6 +609,44 @@ async function toggleStudentReviewed(subId) {
         await saveExamToDB(exam);
         render();
     }
+}
+
+function openStudentDetailModal(subId) {
+    const exam = state.cachedExams.find(e => e.id === state.selectedExamId);
+    if (!exam || !exam.submissions) return;
+    const sub = exam.submissions.find(s => s.id === subId);
+    if (!sub) return;
+
+    const mins = Math.floor((sub.secondsSpent || 0) / 60);
+
+    const content = document.getElementById('studentDetailContent');
+    content.innerHTML = `
+        <div class="space-y-6">
+            <div>
+                <span class="text-xs font-bold text-red-600 uppercase tracking-wider">Elevsvar</span>
+                <h2 class="text-2xl font-bold text-slate-900">${sub.studentName}</h2>
+                <p class="text-xs text-slate-500">${exam.title} • Inlämnad: ${sub.submittedAt || ''} • Tid: ${mins} min</p>
+            </div>
+
+            <div class="space-y-4">
+                ${(exam.questions || []).map((q, idx) => {
+                    const ans = sub.answers ? sub.answers['q_' + idx] : 'Inget svar';
+                    return `
+                        <div class="p-4 rounded-xl border border-slate-200 bg-slate-50 space-y-2">
+                            <span class="font-bold text-xs text-slate-500">Fråga ${idx + 1} (${q.type === 'mc' ? 'Flerval' : 'Öppen text'})</span>
+                            <h4 class="font-bold text-slate-800 text-sm">${q.text}</h4>
+                            <div class="p-3 bg-white rounded-lg border border-slate-200 text-xs font-mono text-slate-700 whitespace-pre-wrap">${ans || 'Inget svar'}</div>
+                        </div>
+                    `;
+                }).join('')}
+            </div>
+        </div>
+    `;
+    document.getElementById('studentDetailModal').classList.remove('hidden');
+}
+
+function closeStudentDetailModal() {
+    document.getElementById('studentDetailModal').classList.add('hidden');
 }
 
 function openCreateExamModal() {
@@ -700,6 +790,7 @@ function renderAdminEdit(container) {
                 <div class="flex items-center justify-between pt-4 border-t border-slate-200">
                     <div class="space-x-2">
                         <button type="button" onclick="addTextQuestion()" class="px-3 py-2 bg-red-50 text-red-700 font-bold text-xs rounded-xl">+ Öppen fråga</button>
+                        <button type="button" onclick="addMCQuestion()" class="px-3 py-2 bg-red-50 text-red-700 font-bold text-xs rounded-xl">+ Flervalsfråga</button>
                     </div>
                     <button type="submit" class="px-6 py-2.5 bg-emerald-600 text-white font-bold rounded-xl text-xs shadow-md">
                         Spara Uppgift
@@ -728,21 +819,46 @@ function toggleCustomKlassInput(val) {
 }
 
 function renderEditQuestionCard(q, idx, totalQuestions) {
-    return `
-        <div class="p-4 rounded-xl border border-slate-200 bg-slate-50 space-y-3">
-            <div class="flex items-center justify-between">
-                <span class="font-bold text-xs text-red-600">Fråga ${idx + 1}</span>
-                <button type="button" onclick="removeQuestion(${idx})" class="text-red-500 text-xs"><i class="fa-solid fa-trash"></i></button>
+    if (q.type === 'mc') {
+        return `
+            <div class="p-4 rounded-xl border border-slate-200 bg-slate-50 space-y-3">
+                <div class="flex items-center justify-between">
+                    <span class="font-bold text-xs text-red-600">Flervalsfråga ${idx + 1}</span>
+                    <button type="button" onclick="removeQuestion(${idx})" class="text-red-500 text-xs"><i class="fa-solid fa-trash"></i></button>
+                </div>
+                <input type="text" value="${q.text || ''}" onchange="state.editingExam.questions[${idx}].text = this.value" placeholder="Skriv frågan..." class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm">
+                <div class="space-y-2 pt-1">
+                    <label class="block text-xs font-bold text-slate-600">Svarsalternativ:</label>
+                    ${(q.options || []).map((opt, oIdx) => `
+                        <input type="text" value="${opt \vert{}\vert{} ''}" onchange="state.editingExam.questions[${idx}].options[${oIdx}] = this.value" placeholder="Alternativ ${oIdx + 1}" class="w-full px-3 py-1.5 rounded-lg border border-slate-300 text-sm">
+                    `).join('')}
+                </div>
             </div>
-            <input type="text" value="${q.text || ''}" onchange="state.editingExam.questions[${idx}].text = this.value" placeholder="Skriv frågan..." class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm">
-        </div>
-    `;
+        `;
+    } else {
+        return `
+            <div class="p-4 rounded-xl border border-slate-200 bg-slate-50 space-y-3">
+                <div class="flex items-center justify-between">
+                    <span class="font-bold text-xs text-red-600">Öppen fråga ${idx + 1}</span>
+                    <button type="button" onclick="removeQuestion(${idx})" class="text-red-500 text-xs"><i class="fa-solid fa-trash"></i></button>
+                </div>
+                <input type="text" value="${q.text || ''}" onchange="state.editingExam.questions[${idx}].text = this.value" placeholder="Skriv frågan..." class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm">
+            </div>
+        `;
+    }
 }
 
 function addTextQuestion() {
     syncFormToState();
     if (!state.editingExam.questions) state.editingExam.questions = [];
-    state.editingExam.questions.push({ id: Date.now(), type: 'text', text: '', criteria: '' });
+    state.editingExam.questions.push({ id: Date.now(), type: 'text', text: '' });
+    render();
+}
+
+function addMCQuestion() {
+    syncFormToState();
+    if (!state.editingExam.questions) state.editingExam.questions = [];
+    state.editingExam.questions.push({ id: Date.now(), type: 'mc', text: '', options: ['', '', '', ''] });
     render();
 }
 
