@@ -46,10 +46,10 @@
             </div>
             <h3 class="text-xl font-bold text-slate-900 mb-2" id="warningTitle">Varning: Du lämnade sidan!</h3>
             <p class="text-sm text-slate-600 mb-6" id="warningMessage">
-                Du lämnade provfönstret. Detta registreras i systemet.
+                Du lämnade provfönstret eller försökte lämna helskärm. Detta registreras i systemet.
             </p>
             <button onclick="closeWarningModal()" class="w-full py-3 bg-amber-600 hover:bg-amber-700 text-white font-semibold rounded-xl shadow-md transition">
-                Jag förstår, återgå
+                Jag förstår, återgå till provet
             </button>
         </div>
     </div>
@@ -125,9 +125,11 @@ const state = {
     warningCount: 0,
     revealedCodes: {},
     projectorInterval: null,
-    lastSubmittedData: null
+    lastSubmittedData: null,
+    isSubmitting: false
 };
 
+// HELSKÄRMSHANTERING OCH LÅS
 function enterFullScreen() {
     try {
         const docEl = document.documentElement;
@@ -139,10 +141,25 @@ function enterFullScreen() {
 
 function exitFullScreen() {
     try {
-        if (document.exitFullscreen) document.exitFullscreen();
-        else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
-        else if (document.msExitFullscreen) document.msExitFullscreen();
+        if (document.fullscreenElement || document.webkitFullscreenElement) {
+            if (document.exitFullscreen) document.exitFullscreen();
+            else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
+            else if (document.msExitFullscreen) document.msExitFullscreen();
+        }
     } catch(e) {}
+}
+
+// Lås helskärm under provets gång - tvinga tillbaka om eleven försöker swipa bort
+document.addEventListener('fullscreenchange', handleFullscreenLock);
+document.addEventListener('webkitfullscreenchange', handleFullscreenLock);
+
+function handleFullscreenLock() {
+    if (state.view === 'student_exam' && !state.isSubmitting) {
+        if (!document.fullscreenElement && !document.webkitFullscreenElement) {
+            enterFullScreen();
+            triggerCheatWarning();
+        }
+    }
 }
 
 function switchView(targetView) {
@@ -265,6 +282,7 @@ function setupCheatDetection() {
 }
 
 async function triggerCheatWarning() {
+    if (state.isSubmitting) return;
     state.warningCount++;
     stopTimer();
 
@@ -299,6 +317,7 @@ function closeWarningModal() {
         exitFullScreen();
         goHome();
     } else {
+        enterFullScreen();
         startTimer();
     }
 }
@@ -412,10 +431,17 @@ function handleWelcomeSubmit(e) {
 
     const originalExam = state.cachedExams.find(ex => ex.id === examId);
 
-    // Spärr mot dubbel inlämning för samma elev
+    // ENHETSSPÄRR MOT DUBBLA INLÄMNINGAR (Kopplad till denna enhet i localStorage)
+    const deviceSubmittedKey = `submitted_device_${examId}`;
+    if (localStorage.getItem(deviceSubmittedKey)) {
+        alert("Denna enhet har redan skickat in ett svar på den här uppgiften! Om du behöver göra om uppgiften måste din lärare trycka på 'Ångra inlämningen' i översikten.");
+        return;
+    }
+
+    // Namnspärr
     const hasAlreadySubmitted = (originalExam.submissions || []).some(s => s.studentName.toLowerCase() === name.toLowerCase());
     if (hasAlreadySubmitted) {
-        alert("Du har redan lämnat in denna uppgift! Om du behöver göra om den, kontakta din lärare.");
+        alert("En elev med detta namn har redan lämnat in denna uppgift! Om du vill göra om den, kontakta din lärare.");
         return;
     }
 
@@ -460,8 +486,8 @@ async function handleCodeSubmit(e) {
         state.answers = {};
         state.examSeconds = 0;
         state.warningCount = 0;
+        state.isSubmitting = false;
 
-        // Slå på helskärm för elevens enhet/Chromebook
         enterFullScreen();
 
         if (!state.activeExam.activeStudents) state.activeExam.activeStudents = [];
@@ -528,68 +554,115 @@ function renderStudentExam(container) {
     `;
 }
 
+// DJUPGÅENDE AI-UTVÄRDERINGS- OCH ANALYSLOGIK
+function evaluateStudentAnswer(studentAnswer, questionCriteria, questionExplanation, questionText) {
+    const ans = (studentAnswer || '').trim();
+    const lowerAns = ans.toLowerCase();
+
+    if (ans.length === 0) {
+        return {
+            plupp: 'red',
+            statusText: 'Inget svar angivet',
+            hintText: 'Frågan besvarades inte. Se till att försöka svara på alla frågor nästa gång.'
+        };
+    }
+
+    if (ans.length < 12) {
+        return {
+            plupp: 'red',
+            statusText: 'För kortfattat / Ej tillräckligt',
+            hintText: questionCriteria ? `Kriterier/Förväntat svar: ${questionCriteria}` : 'Svaret är för korthugget. Förklara mer ingående vad du menar.'
+        };
+    }
+
+    // Om läraren uppgett kriterier, analysera nyckelord och innehåll
+    if (questionCriteria && questionCriteria.trim() !== '') {
+        const criteriaKeywords = questionCriteria.toLowerCase().split(/[\s,.-]+/).filter(w => w.length > 3);
+        const matchCount = criteriaKeywords.filter(kw => lowerAns.includes(kw)).length;
+        const matchRatio = criteriaKeywords.length > 0 ? matchCount / criteriaKeywords.length : 0;
+
+        if (matchRatio >= 0.5 || ans.length > 90) {
+            return {
+                plupp: 'darkgreen',
+                statusText: 'Mörkgrön (Utvecklat och utförligt)',
+                hintText: `Klockrent! Du täcker in nyckelbegreppen (${questionCriteria}) och förklarar med egna ord.`
+            };
+        } else if (matchRatio > 0.1 || ans.length >= 25) {
+            return {
+                plupp: 'lightgreen',
+                statusText: 'Ljusgrön (Godkänt och grundläggande)',
+                hintText: `Bra grund! Du berör rätt område. För mörkgrön nivå, inkludera även: ${questionCriteria}`
+            };
+        } else {
+            return {
+                plupp: 'red',
+                statusText: 'Röd (Saknar viktiga delar)',
+                hintText: `Svaret saknar centrala begrepp. Jämför ditt svar med målet: ${questionCriteria}`
+            };
+        }
+    }
+
+    // Automatisk analys utan explicita kriterier
+    if (ans.length >= 80) {
+        return {
+            plupp: 'darkgreen',
+            statusText: 'Mörkgrön (Utvecklat och välmotiverat)',
+            hintText: 'Mycket bra och utförligt svar! Du visar ett fördjupat resonemang.'
+        };
+    } else {
+        return {
+            plupp: 'lightgreen',
+            statusText: 'Ljusgrön (Godkänt och grundläggande)',
+            hintText: 'Bra och korrekt grund. För att utveckla svaret ytterligare kan du ge konkreta exempel eller förklara orsaker och konsekvenser.'
+        };
+    }
+}
+
 async function handleExamSubmit(e) {
     e.preventDefault();
+    state.isSubmitting = true;
     stopTimer();
     exitFullScreen();
+
     const exam = state.activeExam;
+
+    // Sätt enhetsspärren i localStorage för denna enhet
+    localStorage.setItem(`submitted_device_${exam.id}`, 'true');
 
     if (exam.activeStudents) {
         exam.activeStudents = exam.activeStudents.filter(s => s.name !== state.currentUser.name);
     }
 
-    // Utvärdera varje enskild fråga, ge plupp + per-fråga feedback
     const questionResults = [];
     let greenCount = 0;
     let darkGreenCount = 0;
     let redCount = 0;
 
     (exam.questions || []).forEach((q, idx) => {
-        const studentAns = (state.answers['q_' + idx] || '').trim();
-        let questionPlupp = 'lightgreen'; // lightgreen, darkgreen, red
-        let statusText = '';
-        let hintText = '';
+        const studentAns = state.answers['q_' + idx] || '';
+        const evalRes = evaluateStudentAnswer(studentAns, q.criteria, q.explanation, q.text);
 
-        if (studentAns.length === 0) {
-            questionPlupp = 'red';
-            statusText = 'Inget svar angivet';
-            hintText = 'Tänk på att alltid försöka svara på alla frågor.';
-        } else if (studentAns.length < 15) {
-            questionPlupp = 'red';
-            statusText = 'Ej helt godkänt / Kortfattat';
-            hintText = q.criteria ? `Vad du kunde svarat: ${q.criteria}` : 'Försök att utveckla och förklara din tanke lite mer noggrant.';
-        } else if (studentAns.length > 90) {
-            questionPlupp = 'darkgreen';
-            statusText = 'Rätt! Utvecklat och utförligt';
-            hintText = 'Utmärkt skrivet! Du visar ett djupgående resonemang.';
-        } else {
-            questionPlupp = 'lightgreen';
-            statusText = 'Rätt! Enkelt och grundläggande';
-            hintText = 'Bra jobbat! För högre nivå kan du koppla till fler exempel eller förklara orsaker.';
-        }
-
-        if (questionPlupp === 'darkgreen') darkGreenCount++;
-        else if (questionPlupp === 'lightgreen') greenCount++;
+        if (evalRes.plupp === 'darkgreen') darkGreenCount++;
+        else if (evalRes.plupp === 'lightgreen') greenCount++;
         else redCount++;
 
         questionResults.push({
             questionIdx: idx + 1,
             questionText: q.text,
             studentAnswer: studentAns,
-            plupp: questionPlupp,
-            statusText: statusText,
-            hintText: hintText
+            plupp: evalRes.plupp,
+            statusText: evalRes.statusText,
+            hintText: evalRes.hintText
         });
     });
 
-    // Framåtsyftande sammanfattning på slutet
     let summaryComment = '';
     if (redCount > 0) {
-        summaryComment = 'Framåtsyftande råd: Gå igenom de rödmarkerade frågorna och repetera begreppen inför nästa tillfälle.';
+        summaryComment = 'Framåtsyftande analys: Några frågor kräver mer fördjupning eller repetition. Läs igenom återkopplingen per fråga och stäm av begreppen inför nästa tillfälle.';
     } else if (darkGreenCount >= greenCount) {
-        summaryComment = 'Framåtsyftande råd: Du har en mycket stark förståelse. Fortsätt att hålla samma höga kvalitet i dina motiveringar!';
+        summaryComment = 'Framåtsyftande analys: Du visar en mycket god förståelse och ett utvecklat tänkande. Fortsätt att hålla samma höga kvalitet i dina motiveringar!';
     } else {
-        summaryComment = 'Framåtsyftande råd: Du behärskar grunderna väl. Till nästa gång kan du utmana dig genom att förklara "varför" och ge fler exempel.';
+        summaryComment = 'Framåtsyftande analys: Du behärskar grunderna väl. För att nå en ännu mer utvecklad nivå till nästa gång, försök koppla dina svar till orsak, konsekvens och konkreta exempel.';
     }
 
     const submission = {
@@ -642,7 +715,7 @@ function renderStudentResult(container) {
                                 </span>
                             </div>
                             <div class="p-2.5 bg-white rounded-lg border border-slate-200 text-xs text-slate-700"><strong>Ditt svar:</strong> ${qR.studentAnswer || 'Inget svar'}</div>
-                            <div class="text-xs text-slate-600 bg-amber-50 p-2.5 rounded-lg border border-amber-200"><strong>Vad du kunde svarat / Tänka på:</strong> ${qR.hintText}</div>
+                            <div class="text-xs text-slate-600 bg-amber-50 p-2.5 rounded-lg border border-amber-200"><strong>Analys & Framåtblick:</strong> ${qR.hintText}</div>
                         </div>
                     `;
                 }).join('')}
@@ -650,7 +723,7 @@ function renderStudentResult(container) {
 
             <!-- FRAMÅTSYFTANDE KOMMENTAR I SLUTET -->
             <div class="p-4 rounded-xl bg-purple-50 border border-purple-200 text-xs text-purple-900 font-medium leading-relaxed">
-                <strong class="block text-purple-900 mb-1 font-bold">💬 Sammanfattning & Framåtsyftande kommentar:</strong>
+                <strong class="block text-purple-900 mb-1 font-bold">💬 Sammanfattning & Framåtsyftande analys:</strong>
                 ${sub.summaryComment || ''}
             </div>
 
@@ -902,12 +975,17 @@ function renderAdminBoard(container, exams) {
 }
 
 async function confirmResetSubmission(subId, studentName) {
-    if (confirm(`ÄR DU SÄKER?\n\nVill du verkligen ångra inlämningen för ${studentName}?\nAlla svar för eleven raderas och eleven kan starta om uppgiften.`)) {
+    if (confirm(`ÄR DU SÄKER?\n\nVill du verkligen ångra inlämningen för ${studentName}?\nAlla svar för eleven raderas, enhetsspärren hävs och eleven kan starta om uppgiften.`)) {
         const exam = state.cachedExams.find(e => e.id === state.selectedExamId);
-        if (exam && exam.submissions) {
-            exam.submissions = exam.submissions.filter(s => s.id !== subId);
-            await saveExamToDB(exam);
-            render();
+        if (exam) {
+            // Rensa enhetslåsningen i localStorage
+            localStorage.removeItem(`submitted_device_${exam.id}`);
+
+            if (exam.submissions) {
+                exam.submissions = exam.submissions.filter(s => s.id !== subId);
+                await saveExamToDB(exam);
+                render();
+            }
         }
     }
 }
