@@ -327,8 +327,7 @@ function handleWelcomeSubmit(e) {
     const examId = document.getElementById('studentExamSelect').value;
 
     const originalExam = state.cachedExams.find(ex => ex.id === examId);
-    
-    // Slumpa svarsalternativen för flervalsfrågor unikt för denna elev
+
     const preparedQuestions = (originalExam.questions || []).map(q => {
         if (q.type === 'mc' && q.options) {
             return {
@@ -406,14 +405,14 @@ function renderStudentExam(container) {
             <form onsubmit="handleExamSubmit(event)" class="space-y-6">
                 ${questions.length === 0 ? '<div class="bg-white p-6 rounded-2xl border text-center text-slate-400">Denna uppgift saknar frågor än så länge.</div>' : ''}
                 ${questions.map((q, idx) => {
+                    const optionsList = q.shuffledOptions || q.options || [];
                     if (q.type === 'mc') {
-                        const opts = q.shuffledOptions || q.options || [];
                         return `
                             <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-3">
                                 <div class="text-xs font-bold text-red-600">Fråga ${idx + 1} (Flerval)</div>
                                 <h3 class="text-base font-bold text-slate-900">${q.text}</h3>
                                 <div class="space-y-2 pt-1">
-                                    ${opts.map(opt => `
+                                    ${optionsList.map(opt => `
                                         <label class="flex items-center p-3 rounded-xl border border-slate-200 hover:bg-slate-50 cursor-pointer">
                                             <input type="radio" name="q_${idx}" value="${opt}" onchange="state.answers['q_${idx}'] = this.value" required class="w-4 h-4 text-red-600">
                                             <span class="ml-3 text-sm text-slate-700">${opt}</span>
