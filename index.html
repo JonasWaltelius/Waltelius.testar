@@ -149,9 +149,8 @@ function startTimer() {
         state.examSeconds++;
         const el = document.getElementById('digitalClock');
         if (el) {
-            const mins = String(Math.floor(state.examSeconds / 60)).padStart(2, '0');
-            const secs = String(state.examSeconds % 60).padStart(2, '0');
-            el.innerText = `${mins}:${secs}`;
+            const mins = Math.floor(state.examSeconds / 60);
+            el.innerText = `${mins} min`;
         }
     }, 1000);
 }
@@ -164,13 +163,10 @@ function stopTimer() {
 }
 
 function setupCheatDetection() {
-    window.onvisibilitychange = () => {
+    // Reagerar ENBART om sidan minimeras, stängs ner eller om fliken byts ut.
+    // Ignorerar iPad-tangentbord, klick i fält osv.
+    document.onvisibilitychange = () => {
         if (document.hidden && state.view === 'student_exam') {
-            triggerCheatWarning();
-        }
-    };
-    window.onblur = () => {
-        if (state.view === 'student_exam') {
             triggerCheatWarning();
         }
     };
@@ -358,8 +354,7 @@ function handleCodeSubmit(e) {
 function renderStudentExam(container) {
     const exam = state.activeExam || {};
     const questions = exam.questions || [];
-    const initialMins = String(Math.floor(state.examSeconds / 60)).padStart(2, '0');
-    const initialSecs = String(state.examSeconds % 60).padStart(2, '0');
+    const initialMins = Math.floor(state.examSeconds / 60);
 
     container.innerHTML = `
         <div class="max-w-2xl mx-auto space-y-6">
@@ -371,7 +366,7 @@ function renderStudentExam(container) {
                 </div>
                 <div class="bg-white/10 px-4 py-2 rounded-xl backdrop-blur-sm flex items-center gap-2 border border-white/20">
                     <i class="fa-regular fa-clock text-red-200"></i>
-                    <span id="digitalClock" class="font-mono font-bold text-lg text-white">${initialMins}:${initialSecs}</span>
+                    <span id="digitalClock" class="font-mono font-bold text-sm text-white">${initialMins} min</span>
                 </div>
             </div>
 
@@ -419,7 +414,6 @@ async function handleExamSubmit(e) {
 
 function renderStudentResult(container) {
     const mins = Math.floor(state.examSeconds / 60);
-    const secs = state.examSeconds % 60;
 
     container.innerHTML = `
         <div class="max-w-xl mx-auto mt-8 bg-white p-8 rounded-2xl border border-slate-200 shadow-xl text-center space-y-4">
@@ -428,7 +422,7 @@ function renderStudentResult(container) {
             </div>
             <h2 class="text-2xl font-bold text-slate-900">Inlämning mottagen!</h2>
             <p class="text-sm text-slate-600">Tack <strong>${state.currentUser ? state.currentUser.name : 'Elev'}</strong>, din uppgift har registrerats.</p>
-            <p class="text-xs text-slate-400 font-mono">Tidsåtgång: ${mins} min ${secs} sek ${state.warningCount > 0 ? '• Varningar: ' + state.warningCount : ''}</p>
+            <p class="text-xs text-slate-400 font-mono">Tidsåtgång: ${mins} min ${state.warningCount > 0 ? '• Varningar: ' + state.warningCount : ''}</p>
             <button onclick="switchView('welcome')" class="w-full py-3 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl shadow-md transition">
                 Tillbaka till startsidan
             </button>
