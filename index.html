@@ -41,44 +41,57 @@ const SUPABASE_URL = 'https://omjeuavtqdrktxohmebm.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_Ujz1Opw_GfsUnLFb18nTbg_zZHsWpnT';
 const db = window.supabase ? window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY) : null;
 
-const defaultExams = [
-    {
-        id: 'ex-1',
-        title: 'Industriella Revolutionen',
-        type: 'Test',
-        category: 'Historia',
-        klass: '7H',
-        code: '1234',
-        active: false,
-        archived: false,
-        questions: [{ id: 1, type: 'text', text: 'Vad var ångmaskinens betydelse?', criteria: '' }]
-    }
-];
+// Fallback i lokalt minne om databasen är offline
+let localExamsFallback = JSON.parse(localStorage.getItem('waltelius_local_exams') || '[]');
 
 const state = {
     view: 'welcome',
     cachedExams: [],
-    editingExam: null
+    editingExam: null,
+    showArchive: false
 };
 
 async function getExams() {
-    if (!db) return defaultExams;
+    if (!db) return localExamsFallback;
     try {
         const { data, error } = await db.from('exams').select('*');
-        if (error || !data || data.length === 0) return defaultExams;
+        if (error || !data || data.length === 0) {
+            return localExamsFallback;
+        }
+        // Kronologisk sortering (senast skapad överst)
+        data.sort((a, b) => {
+            const tA = parseInt((a.id || '').replace('ex-', '')) || 0;
+            const tB = parseInt((b.id || '').replace('ex-', '')) || 0;
+            return tB - tA;
+        });
         state.cachedExams = data;
         return data;
     } catch (e) {
-        return defaultExams;
+        return localExamsFallback;
     }
 }
 
 async function saveExamToDB(exam) {
-    if (!db) return;
+    if (!exam.submissions) exam.submissions = [];
+    
+    // Spara alltid i lokalt minne också som säkerhetskopia
+    const localIdx = localExamsFallback.findIndex(e => e.id === exam.id);
+    if (localIdx !== -1) localExamsFallback[localIdx] = exam;
+    else localExamsFallback.unshift(exam);
+    localStorage.setItem('waltelius_local_exams', JSON.stringify(localExamsFallback));
+
+    if (!db) return true;
+
     try {
-        await db.from('exams').upsert(exam);
+        const { error } = await db.from('exams').upsert(exam);
+        if (error) {
+            console.error("Supabase-fel:", error);
+            alert("Obs! Sparades lokalt i webbläsaren. Databasvarning: " + error.message);
+        }
+        return true;
     } catch (e) {
-        console.error("Kunde inte spara:", e);
+        console.error("Nätverksfel:", e);
+        return true;
     }
 }
 
@@ -111,6 +124,7 @@ function renderWelcome(container, exams) {
         <div class="max-w-xl mx-auto mt-6 bg-white rounded-2xl border border-slate-200 shadow-xl p-6 sm:p-8 text-center">
             <span class="inline-block px-3 py-1 bg-red-100 text-red-700 text-xs font-bold rounded-full uppercase tracking-wider mb-2">Elevportal</span>
             <h2 class="text-2xl font-extrabold text-slate-900 mb-4">Välkommen till Waltelius<span class="text-red-600">.testar</span></h2>
+            <p class="text-sm text-slate-600 mb-6">Testpanelen är redo för att skapa och spara prov.</p>
             <button onclick="state.view='admin'; render();" class="w-full py-3 bg-red-600 text-white font-bold rounded-xl shadow-md hover:bg-red-700">
                 Gå till Testpanelen
             </button>
@@ -119,24 +133,50 @@ function renderWelcome(container, exams) {
 }
 
 function renderAdmin(container, exams) {
+    const isArchive = state.showArchive;
+    const filteredExams = exams.filter(e => isArchive ? e.archived : !e.archived);
+
     container.innerHTML = `
         <div class="space-y-6">
-            <div class="flex items-center justify-between bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
-                <h2 class="text-2xl font-bold text-slate-900">Testpanelen</h2>
-                <button onclick="openCreateExamModal()" class="px-5 py-2.5 bg-red-600 text-white font-bold rounded-xl shadow-md text-xs">
-                    + Skapa Ny Uppgift
-                </button>
-            </div>
-            <div class="bg-white rounded-2xl border border-slate-200 p-4 divide-y divide-slate-200">
-                ${exams.map(e => `
-                    <div class="py-3 flex items-center justify-between">
-                        <div>
-                            <div class="font-bold text-slate-900">${e.title}</div>
-                            <div class="text-xs text-slate-500">${e.type} • Klass ${e.klass} • Kod: ${e.code} •${e.active ? 'Aktiv' : 'Inaktiv'}</div>
-                        </div>
-                        <button onclick="openEditExam('${e.id}')" class="px-3 py-1.5 bg-slate-100 text-slate-700 font-semibold rounded-lg text-xs">
-                            Redigera
+            <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+                <div>
+                    <h2 class="text-2xl font-bold text-slate-900">${isArchive ? 'Arkiverade Uppgifter' : 'Testpanelen & Hantering'}</h2>
+                    <p class="text-xs text-slate-500 mt-1">Kronologisk ordning (senast skapad överst).</p>
+                </div>
+                <div class="flex items-center space-x-2">
+                    <button onclick="state.showArchive = !state.showArchive; render();" class="px-4 py-2.5 bg-slate-100 text-slate-700 font-bold rounded-xl text-xs">
+                        <i class="fa-solid fa-box-archive mr-1"></i> ${isArchive ? 'Visa Aktiva' : 'Arkiv'}
+                    </button>
+                    ${!isArchive ? `
+                        <button onclick="openCreateExamModal()" class="px-5 py-2.5 bg-red-600 text-white font-bold rounded-xl shadow-md text-xs">
+                            + Skapa Ny Uppgift
                         </button>
+                    ` : ''}
+                </div>
+            </div>
+
+            <div class="bg-white rounded-2xl border border-slate-200 p-4 divide-y divide-slate-200">
+                ${filteredExams.length === 0 ? `<div class="p-6 text-center text-slate-400">${isArchive ? 'Arkivet är tomt.' : 'Inga uppgifter. Skapa en ny ovan!'}</div>` : ''}
+                ${filteredExams.map(e => `
+                    <div class="py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                        <div>
+                            <div class="font-bold text-slate-900">${e.title || 'Utan titel'}</div>
+                            <div class="text-xs text-slate-500 mt-0.5">
+                                ${e.type === 'Träning' ? 'Träning/Repetition' : e.type} • ${e.category} • Klass ${e.klass} • Kod: <span class="font-mono font-bold text-red-600">${e.code}</span> • 
+                                <span class="font-semibold ${e.active ? 'text-emerald-600' : 'text-slate-400'}">${e.active ? 'Aktiv' : 'Inaktiv'}</span>
+                            </div>
+                        </div>
+                        <div class="flex items-center space-x-1.5">
+                            <button onclick="toggleActive('${e.id}')" class="px-2.5 py-1.5 text-xs font-semibold rounded-lg border ${e.active ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-emerald-50 text-emerald-700 border-emerald-200'}">
+                                ${e.active ? 'Inaktivera' : 'Aktivera'}
+                            </button>
+                            <button onclick="openEditExam('${e.id}')" class="px-2.5 py-1.5 bg-slate-100 text-slate-700 font-semibold rounded-lg text-xs">
+                                Redigera
+                            </button>
+                            <button onclick="toggleArchive('${e.id}')" class="px-2.5 py-1.5 bg-amber-50 text-amber-700 border border-amber-200 font-semibold rounded-lg text-xs">
+                                ${e.archived ? 'Återställ' : 'Arkivera'}
+                            </button>
+                        </div>
                     </div>
                 `).join('')}
             </div>
@@ -152,7 +192,7 @@ function openCreateExamModal() {
         category: 'Historia',
         klass: '7H',
         code: Math.floor(1000 + Math.random() * 9000).toString(),
-        active: false,
+        active: false, // Inaktiverad i ursprungsläget
         archived: false,
         questions: []
     };
@@ -161,10 +201,29 @@ function openCreateExamModal() {
 }
 
 function openEditExam(id) {
-    const exam = state.cachedExams.find(e => e.id === id);
+    const exam = state.cachedExams.find(e => e.id === id) || localExamsFallback.find(e => e.id === id);
     if (exam) {
         state.editingExam = JSON.parse(JSON.stringify(exam));
         state.view = 'admin_edit';
+        render();
+    }
+}
+
+async function toggleActive(id) {
+    const exam = state.cachedExams.find(e => e.id === id) || localExamsFallback.find(e => e.id === id);
+    if (exam) {
+        exam.active = !exam.active;
+        await saveExamToDB(exam);
+        render();
+    }
+}
+
+async function toggleArchive(id) {
+    const exam = state.cachedExams.find(e => e.id === id) || localExamsFallback.find(e => e.id === id);
+    if (exam) {
+        exam.archived = !exam.archived;
+        if (exam.archived) exam.active = false;
+        await saveExamToDB(exam);
         render();
     }
 }
@@ -270,7 +329,7 @@ function renderAdminEdit(container) {
                         <button type="button" onclick="addTextQuestion()" class="px-3 py-2 bg-red-50 text-red-700 font-bold text-xs rounded-xl">+ Öppen fråga</button>
                         <button type="button" onclick="addMCQuestion()" class="px-3 py-2 bg-red-50 text-red-700 font-bold text-xs rounded-xl">+ Flervalsfråga</button>
                     </div>
-                    <button type="submit" class="px-6 py-2.5 bg-emerald-600 text-white font-bold rounded-xl text-xs">
+                    <button type="submit" class="px-6 py-2.5 bg-emerald-600 text-white font-bold rounded-xl text-xs shadow-md">
                         Spara Uppgift
                     </button>
                 </div>
