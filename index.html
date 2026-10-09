@@ -54,6 +54,16 @@
         </div>
     </div>
 
+    <!-- SVÄVANDE POPUP FÖR ELEVSVAR -->
+    <div id="studentDetailModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden" onclick="closeStudentDetailModal()">
+        <div class="bg-white rounded-2xl shadow-2xl max-w-2xl w-full max-h-[85vh] overflow-y-auto p-6 sm:p-8 relative" onclick="event.stopPropagation()">
+            <button onclick="closeStudentDetailModal()" class="absolute top-4 right-4 w-9 h-9 rounded-full bg-slate-100 text-slate-500 hover:bg-slate-200 flex items-center justify-center text-lg">
+                <i class="fa-solid fa-xmark"></i>
+            </button>
+            <div id="studentDetailContent"></div>
+        </div>
+    </div>
+
 <script>
 const SUPABASE_URL = 'https://omjeuavtqdrktxohmebm.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9tamV1YXZ0cWRya3R4b2htZWJtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDEyNjkwMDAsImV4cCI6MjA1Njg0NTAwMH0.1_R5aR_u8-zN6lX_3-90d-_0';
@@ -65,6 +75,7 @@ let localExamsFallback = JSON.parse(localStorage.getItem('waltelius_local_exams'
 const state = {
     view: 'welcome',
     currentUser: null,
+    selectedExamId: null,
     activeExam: null,
     answers: {},
     cachedExams: [],
@@ -216,6 +227,8 @@ async function render() {
 
     if (state.view === 'admin') {
         renderAdmin(app, exams);
+    } else if (state.view === 'admin_board') {
+        renderAdminBoard(app, exams);
     } else if (state.view === 'admin_edit') {
         renderAdminEdit(app);
     } else if (state.view === 'student_code') {
@@ -400,6 +413,7 @@ async function handleExamSubmit(e) {
         status: 'Inlämnat',
         secondsSpent: state.examSeconds,
         warnings: state.warningCount,
+        reviewed: false,
         answers: state.answers
     };
 
@@ -428,6 +442,7 @@ function renderStudentResult(container) {
     `;
 }
 
+// --- ADMIN & LÄRARÖVERSIKT ---
 function renderAdmin(container, exams) {
     const isArchive = state.showArchive;
     const filteredExams = exams.filter(e => isArchive ? e.archived : !e.archived);
@@ -466,6 +481,9 @@ function renderAdmin(container, exams) {
                             <button onclick="toggleActive('${e.id}')" class="px-3 py-1.5 text-xs font-bold rounded-lg border ${e.active ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-emerald-600 text-white shadow-sm'}">
                                 ${e.active ? 'Inaktivera' : 'Aktivera nu!'}
                             </button>
+                            <button onclick="goToBoard('${e.id}')" class="px-2.5 py-1.5 bg-slate-100 text-slate-700 font-semibold rounded-lg text-xs">
+                                Översikt
+                            </button>
                             <button onclick="openEditExam('${e.id}')" class="px-2.5 py-1.5 bg-slate-100 text-slate-700 font-semibold rounded-lg text-xs">
                                 Redigera
                             </button>
@@ -478,6 +496,115 @@ function renderAdmin(container, exams) {
             </div>
         </div>
     `;
+}
+
+function goToBoard(id) {
+    state.selectedExamId = id;
+    switchView('admin_board');
+}
+
+function renderAdminBoard(container, exams) {
+    const exam = exams.find(e => e.id === state.selectedExamId);
+    if (!exam) return;
+    const subs = exam.submissions || [];
+
+    container.innerHTML = `
+        <div class="space-y-6">
+            <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex items-center justify-between">
+                <div>
+                    <h2 class="text-2xl font-bold text-slate-900">${exam.title} - Elevöversikt</h2>
+                    <p class="text-xs text-slate-500 mt-1">Klass ${exam.klass} • ${exam.type} • Totalt ${subs.length} inlämningar</p>
+                </div>
+                <button onclick="switchView('admin')" class="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold rounded-xl text-sm">
+                    Tillbaka
+                </button>
+            </div>
+
+            <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                <table class="w-full text-left border-collapse">
+                    <thead>
+                        <tr class="bg-slate-50 border-b border-slate-200 text-xs font-bold text-slate-500 uppercase">
+                            <th class="p-4">Elev</th>
+                            <th class="p-4">Status</th>
+                            <th class="p-4">Tid</th>
+                            <th class="p-4">Varningar</th>
+                            <th class="p-4 text-right">Granskad</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-slate-200 text-sm">
+                        ${subs.length === 0 ? '<tr><td colspan="5" class="p-6 text-center text-slate-400">Inga elever har lämnat in ännu.</td></tr>' : ''}
+                        ${subs.map(s => {
+                            const mins = Math.floor((s.secondsSpent || 0) / 60);
+                            return `
+                                <tr class="hover:bg-slate-50">
+                                    <td class="p-4 font-bold text-slate-900 cursor-pointer text-red-600 hover:underline" onclick="openStudentDetailModal('${s.id}')">
+                                        ${s.studentName} <i class="fa-solid fa-circle-info text-xs ml-1 opacity-60"></i>
+                                    </td>
+                                    <td class="p-4"><span class="px-2.5 py-1 text-xs font-semibold rounded-full bg-emerald-100 text-emerald-800">${s.status || 'Inlämnat'}</span></td>
+                                    <td class="p-4 font-mono text-xs text-slate-500">${mins} min</td>
+                                    <td class="p-4 text-xs font-semibold ${s.warnings > 0 ? 'text-amber-600' : 'text-slate-400'}">${s.warnings || 0} st</td>
+                                    <td class="p-4 text-right">
+                                        <button onclick="toggleStudentReviewed('${s.id}')" class="px-3 py-1.5 font-semibold text-xs rounded-lg ${s.reviewed ? 'bg-emerald-100 text-emerald-800 border border-emerald-300' : 'bg-slate-100 text-slate-700'}">
+                                            ${s.reviewed ? '✅ Granskad' : 'Markera som granskad'}
+                                        </button>
+                                    </td>
+                                </tr>
+                            `;
+                        }).join('')}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    `;
+}
+
+async function toggleStudentReviewed(subId) {
+    const exam = state.cachedExams.find(e => e.id === state.selectedExamId);
+    if (!exam || !exam.submissions) return;
+    const sub = exam.submissions.find(s => s.id === subId);
+    if (sub) {
+        sub.reviewed = !sub.reviewed;
+        await saveExamToDB(exam);
+        render();
+    }
+}
+
+function openStudentDetailModal(subId) {
+    const exam = state.cachedExams.find(e => e.id === state.selectedExamId);
+    if (!exam || !exam.submissions) return;
+    const sub = exam.submissions.find(s => s.id === subId);
+    if (!sub) return;
+
+    const mins = Math.floor((sub.secondsSpent || 0) / 60);
+
+    const content = document.getElementById('studentDetailContent');
+    content.innerHTML = `
+        <div class="space-y-6">
+            <div>
+                <span class="text-xs font-bold text-red-600 uppercase tracking-wider">Elevsvar</span>
+                <h2 class="text-2xl font-bold text-slate-900">${sub.studentName}</h2>
+                <p class="text-xs text-slate-500">${exam.title} • Inlämnad: ${sub.submittedAt || ''} • Tid: ${mins} min</p>
+            </div>
+
+            <div class="space-y-4">
+                ${(exam.questions || []).map((q, idx) => {
+                    const ans = sub.answers ? sub.answers['q_' + idx] : 'Inget svar';
+                    return `
+                        <div class="p-4 rounded-xl border border-slate-200 bg-slate-50 space-y-2">
+                            <span class="font-bold text-xs text-slate-500">Fråga ${idx + 1}</span>
+                            <h4 class="font-bold text-slate-800 text-sm">${q.text}</h4>
+                            <div class="p-3 bg-white rounded-lg border border-slate-200 text-xs font-mono text-slate-700 whitespace-pre-wrap">${ans || 'Inget svar'}</div>
+                        </div>
+                    `;
+                }).join('')}
+            </div>
+        </div>
+    `;
+    document.getElementById('studentDetailModal').classList.remove('hidden');
+}
+
+function closeStudentDetailModal() {
+    document.getElementById('studentDetailModal').classList.add('hidden');
 }
 
 function openCreateExamModal() {
