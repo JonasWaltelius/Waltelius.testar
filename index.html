@@ -258,7 +258,6 @@ function stopTimer() {
     }
 }
 
-// FLIKBYTE OCH STÄNGNING
 function setupCheatDetection() {
     document.onvisibilitychange = async () => {
         if (document.hidden && state.view === 'student_exam') {
@@ -433,14 +432,12 @@ function handleWelcomeSubmit(e) {
 
     const originalExam = state.cachedExams.find(ex => ex.id === examId);
 
-    // ENHETSSPÄRR MOT DUBBLA INLÄMNINGAR
     const deviceSubmittedKey = `submitted_device_${examId}`;
     if (localStorage.getItem(deviceSubmittedKey)) {
         alert("Denna enhet har redan skickat in ett svar på den här uppgiften! Om du behöver göra om uppgiften måste din lärare trycka på 'Ångra inlämningen' i översikten.");
         return;
     }
 
-    // SPÄRR OM PROVET ÄR LÅST (RÖTT KORT/STÄNGT)
     const existingActiveStudent = (originalExam.activeStudents || []).find(s => s.name.toLowerCase() === name.toLowerCase());
     if (existingActiveStudent && existingActiveStudent.locked) {
         alert("Ditt prov är låst eftersom du tidigare stängde eller lämnade sidan. Be din lärare trycka på 'Återuppta' i översikten för att du ska kunna logga in igen.");
@@ -555,95 +552,50 @@ function renderStudentExam(container) {
                     </div>
                 `).join('')}
 
-                <button type="submit" class="w-full py-3.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl shadow-lg transition">
-                    Lämna in svar
+                <button id="submitBtn" type="submit" class="w-full py-3.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl shadow-lg transition flex items-center justify-center gap-2">
+                    <span>Lämna in svar</span>
                 </button>
             </form>
         </div>
     `;
 }
 
-// AI-ANALYSLOGIK (Med stöd för E, C, A krav samt Entry/Exit Ticket utan nivåer)
-function evaluateStudentAnswer(studentAnswer, questionCriteria, questionExplanation, questionText, isTicket) {
-    const ans = (studentAnswer || '').trim();
-    const lowerAns = ans.toLowerCase();
+// DIREKTANROP TILL SUPABASE EDGE FUNCTION "evaluate-answers" MED GEMINI AI
+async function evaluateAnswersWithAI(questions, answers, isTicket) {
+    try {
+        const response = await fetch(`${SUPABASE_URL}/functions/v1/evaluate-answers`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${SUPABASE_KEY}`
+            },
+            body: JSON.stringify({ questions, answers, isTicket })
+        });
 
-    if (ans.length === 0) {
-        return {
-            plupp: 'red',
-            statusText: 'Inget svar angivet',
-            hintText: 'Frågan besvarades inte. Se till att försöka svara på alla frågor nästa gång.'
-        };
-    }
-
-    if (isTicket) {
-        // Entry / Exit Ticket utan E, C, A nivåer
-        if (ans.length < 10) {
-            return {
-                plupp: 'red',
-                statusText: 'Fel / För kortfattat',
-                hintText: questionExplanation ? `Svaret är för kort. Förklaring för begreppet: ${questionExplanation}` : 'Utveckla din förklaring av begreppet ytterligare.'
-            };
-        } else {
-            return {
-                plupp: 'lightgreen',
-                statusText: 'Rätt / Godkänt begrepp',
-                hintText: 'Bra jobbat! Du visar att du har förstått begreppet.'
-            };
+        if (!response.ok) throw new Error("AIFunktionsfel");
+        const data = await response.json();
+        if (data.questionResults && data.summaryComment) {
+            return data;
         }
-    }
-
-    // Vanliga Prov / Test med E, C, A nivåer
-    if (ans.length < 12) {
-        return {
-            plupp: 'red',
-            statusText: 'Ej helt godkänt / Kortfattat',
-            hintText: questionCriteria ? `Krav för nivåerna: ${questionCriteria}` : 'Svaret är för korthugget. Förklara mer ingående vad du menar.'
-        };
-    }
-
-    if (questionCriteria && questionCriteria.trim() !== '') {
-        const lowerCrit = questionCriteria.toLowerCase();
-        
-        if (ans.length > 100 || (lowerCrit.includes('a') && ans.length > 70)) {
+        throw new Error("Felaktigt AI-format");
+    } catch (e) {
+        // Fallback-analys om nätverksfel uppstår mot Edge Function
+        const questionResults = questions.map((q, idx) => {
+            const ans = (answers['q_' + idx] || '').trim();
+            const plupp = ans.length > 80 ? 'darkgreen' : ans.length >= 25 ? 'lightgreen' : 'red';
             return {
-                plupp: 'darkgreen',
-                statusText: 'Välutvecklat (A-nivå)',
-                hintText: `Klockrent! Du uppfyller kraven för A-nivå (${questionCriteria}) genom att resonera välutvecklat och tydligt.`
+                questionIdx: idx + 1,
+                questionText: q.text,
+                studentAnswer: ans,
+                plupp: plupp,
+                statusText: plupp === 'darkgreen' ? 'Välutvecklat (A-nivå)' : plupp === 'lightgreen' ? 'Godkänt (E/C-nivå)' : 'Ofullständigt / Ej godkänt',
+                hintText: q.criteria ? `Innehåll och betygskrav: ${q.criteria}` : 'Utveckla din motivering och ge konkreta exempel.'
             };
-        } else if (ans.length >= 35 || lowerCrit.includes('c')) {
-            return {
-                plupp: 'lightgreen',
-                statusText: 'Utvecklat (C-nivå)',
-                hintText: `Bra grund! Du uppfyller kraven för C-nivå. För att nå A-nivå (Välutvecklat), utveckla orsakerna ytterligare enligt: ${questionCriteria}`
-            };
-        } else {
-            return {
-                plupp: 'lightgreen',
-                statusText: 'Enkelt (E-nivå)',
-                hintText: `Godkänt på E-nivå! Du ger ett enkelt svar. För högre nivåer (C/A), inkludera fler detaljer baserat på kraven: ${questionCriteria}`
-            };
-        }
-    }
+        });
 
-    // Automatisk nivåbedömning om ingen rad för krav uppgetts
-    if (ans.length >= 85) {
         return {
-            plupp: 'darkgreen',
-            statusText: 'Välutvecklat (A-nivå)',
-            hintText: 'Mycket bra och välutvecklat svar! Du visar ett fördjupat och nyanserat resonemang.'
-        };
-    } else if (ans.length >= 30) {
-        return {
-            plupp: 'lightgreen',
-            statusText: 'Utvecklat (C-nivå)',
-            hintText: 'Bra och utvecklat svar! För att nå A-nivå kan du ge ännu fler konkreta exempel eller förklara bakomliggande orsak/konsekvens.'
-        };
-    } else {
-        return {
-            plupp: 'lightgreen',
-            statusText: 'Enkelt (E-nivå)',
-            hintText: 'Godkänt svar på en enkel och grundläggande nivå. Bygg ut dina svar med mer förklaringar till nästa gång.'
+            questionResults,
+            summaryComment: "Inlämningen är registrerad. Läs igenom återkopplingen per fråga ovan."
         };
     }
 }
@@ -654,6 +606,12 @@ async function handleExamSubmit(e) {
     stopTimer();
     exitFullScreen();
 
+    const submitBtn = document.getElementById('submitBtn');
+    if (submitBtn) {
+        submitBtn.disabled = true;
+        submitBtn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> <span>Analyserar svar med AI...</span>`;
+    }
+
     const exam = state.activeExam;
     const isTicket = ['Entryticket', 'Exitticket'].includes(exam.type);
 
@@ -663,41 +621,8 @@ async function handleExamSubmit(e) {
         exam.activeStudents = exam.activeStudents.filter(s => s.name !== state.currentUser.name);
     }
 
-    const questionResults = [];
-    let greenCount = 0;
-    let darkGreenCount = 0;
-    let redCount = 0;
-
-    (exam.questions || []).forEach((q, idx) => {
-        const studentAns = state.answers['q_' + idx] || '';
-        const evalRes = evaluateStudentAnswer(studentAns, q.criteria, q.explanation, q.text, isTicket);
-
-        if (evalRes.plupp === 'darkgreen') darkGreenCount++;
-        else if (evalRes.plupp === 'lightgreen') greenCount++;
-        else redCount++;
-
-        questionResults.push({
-            questionIdx: idx + 1,
-            questionText: q.text,
-            studentAnswer: studentAns,
-            plupp: evalRes.plupp,
-            statusText: evalRes.statusText,
-            hintText: evalRes.hintText
-        });
-    });
-
-    let summaryComment = '';
-    if (isTicket) {
-        summaryComment = 'Snyggt jobbat! Din Ticket är inlämnad och granskad.';
-    } else {
-        if (redCount > 0) {
-            summaryComment = 'Framåtsyftande analys: Några frågor kräver mer fördjupning. Läs igenom återkopplingen per fråga och stäm av kraven inför nästa tillfälle.';
-        } else if (darkGreenCount >= greenCount) {
-            summaryComment = 'Framåtsyftande analys: Du visar en mycket god förståelse och ett välutvecklat tänkande på A-nivå. Fortsätt hålla samma höga kvalitet!';
-        } else {
-            summaryComment = 'Framåtsyftande analys: Du behärskar grunderna väl på E/C-nivå. För att nå högre nivåer till nästa gång, utveckla dina motiveringar ytterligare med orsaker och exempel.';
-        }
-    }
+    // Anropar den riktiga Gemini AI-analysen via Supabase Edge Function
+    const aiEvaluation = await evaluateAnswersWithAI(exam.questions || [], state.answers, isTicket);
 
     const submission = {
         id: 'sub-' + Date.now(),
@@ -708,8 +633,8 @@ async function handleExamSubmit(e) {
         secondsSpent: state.examSeconds,
         warnings: state.warningCount,
         reviewed: false,
-        questionResults: questionResults,
-        summaryComment: summaryComment,
+        questionResults: aiEvaluation.questionResults || [],
+        summaryComment: aiEvaluation.summaryComment || '',
         answers: state.answers
     };
 
@@ -736,7 +661,7 @@ function renderStudentResult(container) {
             </div>
 
             <div class="space-y-4 pt-2">
-                <h3 class="text-xs font-bold uppercase tracking-wider text-slate-500">Din Respons per fråga:</h3>
+                <h3 class="text-xs font-bold uppercase tracking-wider text-slate-500">AI-Analys & Respons per fråga:</h3>
                 ${(sub.questionResults || []).map(qR => {
                     const pluppClass = qR.plupp === 'darkgreen' ? 'bg-emerald-700' : qR.plupp === 'red' ? 'bg-red-500' : 'bg-emerald-400';
                     return `
@@ -749,7 +674,7 @@ function renderStudentResult(container) {
                                 </span>
                             </div>
                             <div class="p-2.5 bg-white rounded-lg border border-slate-200 text-xs text-slate-700"><strong>Ditt svar:</strong> ${qR.studentAnswer || 'Inget svar'}</div>
-                            <div class="text-xs text-slate-600 bg-amber-50 p-2.5 rounded-lg border border-amber-200"><strong>Analys & Framåtblick:</strong> ${qR.hintText}</div>
+                            <div class="text-xs text-slate-600 bg-amber-50 p-2.5 rounded-lg border border-amber-200"><strong>AI-Feedback & Framåtblick:</strong> ${qR.hintText}</div>
                         </div>
                     `;
                 }).join('')}
@@ -869,7 +794,6 @@ function closeProjectorModal() {
     document.getElementById('projectorModal').classList.add('hidden');
 }
 
-// "VISA PÅ SKÄRM" - MED STÖD FÖR INAKTIVERAD "EJ INLÄMNAD" SAMT KLOCKSLAG FÖR INLÄMNING
 async function updateProjectorLists() {
     const exams = await getExams();
     const exam = exams.find(e => e.id === state.selectedExamId);
@@ -997,7 +921,6 @@ function renderAdminBoard(container, exams) {
                                         </div>
                                     </td>
                                     <td class="p-4 text-right space-x-2">
-                                        <!-- "Granska" knapp i gult, byts till grönt när den klickas -->
                                         <button onclick="toggleStudentReviewed('${s.id}')" class="px-3 py-1.5 font-bold text-xs rounded-lg shadow-sm transition ${isReviewed ? 'bg-emerald-600 text-white' : 'bg-amber-400 hover:bg-amber-500 text-slate-900'}">
                                             ${isReviewed ? '✅ Granskad' : 'Granska'}
                                         </button>
@@ -1071,7 +994,7 @@ function openStudentDetailModal(subId) {
                                 </span>
                             </div>
                             <div class="p-3 bg-white rounded-lg border border-slate-200 text-xs font-mono text-slate-700 whitespace-pre-wrap">${qR.studentAnswer || 'Inget svar'}</div>
-                            <div class="text-xs text-slate-600 bg-amber-50 p-2.5 rounded-lg border border-amber-200"><strong>Analys & Framåtblick:</strong> ${qR.hintText}</div>
+                            <div class="text-xs text-slate-600 bg-amber-50 p-2.5 rounded-lg border border-amber-200"><strong>AI-Feedback & Framåtblick:</strong> ${qR.hintText}</div>
                         </div>
                     `;
                 }).join('')}
@@ -1158,7 +1081,6 @@ function syncFormToState() {
     if (typeEl) state.editingExam.type = typeEl.value;
 }
 
-// SKAPARLÄGE MED TRE RADER (FRÅGA, SVARSALTERNATIV/MODELLSVAR, KRAV FÖR E,C,A)
 function renderAdminEdit(container) {
     const exam = state.editingExam || {};
     const isCustomClass = !['7H', '8H', '9H'].includes(exam.klass);
