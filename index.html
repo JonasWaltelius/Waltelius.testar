@@ -12,13 +12,13 @@
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
         body { font-family: 'Inter', sans-serif; }
         .no-select { user-select: none; -webkit-user-select: none; }
-        textarea, input { -webkit-user-select: text; }
+        .allow-select { user-select: text; -webkit-user-select: text; }
     </style>
 </head>
-<body class="bg-slate-50 text-slate-800 min-h-screen flex flex-col antialiased no-select" oncopy="return false" oncut="return false" onpaste="return false">
+<body class="bg-slate-50 text-slate-800 min-h-screen flex flex-col antialiased no-select">
 
     <!-- NAV / HEADER -->
-    <header class="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-sm">
+    <header class="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-sm allow-select">
         <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
             <div class="flex items-center space-x-3 cursor-pointer" onclick="goHome()">
                 <div class="w-10 h-10 bg-gradient-to-br from-red-600 to-red-800 rounded-xl flex items-center justify-center text-white shadow-md">
@@ -38,7 +38,7 @@
 
     <main class="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8" id="app"></main>
 
-    <!-- MODAL FÖR FLIKBYTE / VARNING -->
+    <!-- MODAL FÖR FLIKBYTE / VARNING / LÅSNING -->
     <div id="cheatWarningModal" class="fixed inset-0 bg-slate-900/80 backdrop-blur-md z-50 flex items-center justify-center p-4 hidden">
         <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 text-center border-2 border-amber-500">
             <div class="w-16 h-16 bg-amber-100 rounded-full flex items-center justify-center mx-auto mb-4 text-amber-600 text-3xl">
@@ -55,7 +55,7 @@
     </div>
 
     <!-- SVÄVANDE POPUP FÖR ELEVSVAR & RESPONS -->
-    <div id="studentDetailModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden" onclick="closeStudentDetailModal()">
+    <div id="studentDetailModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden allow-select" onclick="closeStudentDetailModal()">
         <div class="bg-white rounded-2xl shadow-2xl max-w-2xl w-full max-h-[85vh] overflow-y-auto p-6 sm:p-8 relative" onclick="event.stopPropagation()">
             <button onclick="closeStudentDetailModal()" class="absolute top-4 right-4 w-9 h-9 rounded-full bg-slate-100 text-slate-500 hover:bg-slate-200 flex items-center justify-center text-lg">
                 <i class="fa-solid fa-xmark"></i>
@@ -65,7 +65,7 @@
     </div>
 
     <!-- HELSKÄRMSLÄGE: VISA PÅ SKÄRM (PROJEKTOR / KLASSRUMSSTYRNING) -->
-    <div id="projectorModal" class="fixed inset-0 bg-slate-900 z-50 flex flex-col p-6 sm:p-8 text-white hidden overflow-y-auto">
+    <div id="projectorModal" class="fixed inset-0 bg-slate-900 z-50 flex flex-col p-6 sm:p-8 text-white hidden overflow-y-auto allow-select">
         <div class="flex items-center justify-between border-b border-slate-800 pb-4 mb-6">
             <div>
                 <span class="px-3 py-1 bg-red-600/30 text-red-400 font-bold uppercase tracking-widest text-xs rounded-full border border-red-500/30">
@@ -85,10 +85,9 @@
             </div>
         </div>
 
-        <!-- REALTIDSSTATUS PÅ SKÄRM (ENBART NAMN & KORT, INGA PLUPPAR/BEDÖMNINGAR) -->
         <div class="grid grid-cols-1 md:grid-cols-2 gap-6 flex-1">
             <div class="bg-slate-800/60 rounded-2xl p-5 border border-slate-700/60">
-                <h3 class="text-lg font-bold text-amber-400 mb-4 flex items-center gap-2">
+                <h3 id="projOngoingTitle" class="text-lg font-bold text-amber-400 mb-4 flex items-center gap-2">
                     <i class="fa-solid fa-spinner fa-spin"></i> Pågående (<span id="countOngoing">0</span>)
                 </h3>
                 <div id="listOngoing" class="space-y-2.5 max-h-[55vh] overflow-y-auto pr-2"></div>
@@ -259,12 +258,30 @@ function stopTimer() {
     }
 }
 
+// FLIKBYTE OCH STÄNGNING
 function setupCheatDetection() {
     document.onvisibilitychange = async () => {
         if (document.hidden && state.view === 'student_exam') {
             await triggerCheatWarning();
         }
     };
+    
+    window.onbeforeunload = async () => {
+        if (state.view === 'student_exam' && !state.isSubmitting) {
+            await lockStudentCompletely();
+        }
+    };
+}
+
+async function lockStudentCompletely() {
+    if (state.activeExam && state.currentUser) {
+        const student = (state.activeExam.activeStudents || []).find(s => s.name === state.currentUser.name);
+        if (student) {
+            student.locked = true;
+            student.warnings = 2;
+            await saveExamToDB(state.activeExam);
+        }
+    }
 }
 
 async function triggerCheatWarning() {
@@ -290,7 +307,7 @@ async function triggerCheatWarning() {
         modal.classList.remove('hidden');
     } else if (state.warningCount >= 2) {
         document.getElementById('warningTitle').innerText = "Rött Kort: Provet låst!";
-        document.getElementById('warningMessage').innerText = "Ditt prov har låsts eftersom du lämnat sidan upprepade gånger.";
+        document.getElementById('warningMessage').innerText = "Ditt prov har låsts eftersom du lämnat eller stängt sidan. Kontakta din lärare för att återuppta.";
         modal.classList.remove('hidden');
     }
 }
@@ -416,9 +433,17 @@ function handleWelcomeSubmit(e) {
 
     const originalExam = state.cachedExams.find(ex => ex.id === examId);
 
+    // ENHETSSPÄRR MOT DUBBLA INLÄMNINGAR
     const deviceSubmittedKey = `submitted_device_${examId}`;
     if (localStorage.getItem(deviceSubmittedKey)) {
         alert("Denna enhet har redan skickat in ett svar på den här uppgiften! Om du behöver göra om uppgiften måste din lärare trycka på 'Ångra inlämningen' i översikten.");
+        return;
+    }
+
+    // SPÄRR OM PROVET ÄR LÅST (RÖTT KORT/STÄNGT)
+    const existingActiveStudent = (originalExam.activeStudents || []).find(s => s.name.toLowerCase() === name.toLowerCase());
+    if (existingActiveStudent && existingActiveStudent.locked) {
+        alert("Ditt prov är låst eftersom du tidigare stängde eller lämnade sidan. Be din lärare trycka på 'Återuppta' i översikten för att du ska kunna logga in igen.");
         return;
     }
 
@@ -524,6 +549,7 @@ function renderStudentExam(container) {
                         <div class="text-xs font-bold text-red-600">${isTicket ? 'Begrepp ' + (idx + 1) : 'Fråga ' + (idx + 1)}</div>
                         <h3 class="text-base font-bold text-slate-900">${q.text || 'Begrepp/Fråga'}</h3>
                         ${isTicket && q.explanation ? `<div class="text-xs bg-slate-100 p-2.5 rounded-lg text-slate-600"><strong>Förklaring/Kontext:</strong> ${q.explanation}</div>` : ''}
+                        ${!isTicket && q.criteria ? `<div class="text-xs text-amber-800 bg-amber-50 p-2.5 rounded-lg border border-amber-200"><strong>Betygskrav för nivån:</strong> ${q.criteria}</div>` : ''}
                         <textarea required onpaste="return false" oncopy="return false" oncut="return false" onchange="state.answers['q_${idx}'] = this.value" rows="3" 
                             placeholder="${isTicket ? 'Skriv förklaring/resonemang kring begreppet...' : 'Skriv ditt svar här...'}" class="w-full p-3.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-red-500 outline-none text-sm"></textarea>
                     </div>
@@ -537,7 +563,8 @@ function renderStudentExam(container) {
     `;
 }
 
-function evaluateStudentAnswer(studentAnswer, questionCriteria, questionExplanation, questionText) {
+// AI-ANALYSLOGIK (Med stöd för E, C, A krav samt Entry/Exit Ticket utan nivåer)
+function evaluateStudentAnswer(studentAnswer, questionCriteria, questionExplanation, questionText, isTicket) {
     const ans = (studentAnswer || '').trim();
     const lowerAns = ans.toLowerCase();
 
@@ -549,51 +576,74 @@ function evaluateStudentAnswer(studentAnswer, questionCriteria, questionExplanat
         };
     }
 
-    if (ans.length < 12) {
-        return {
-            plupp: 'red',
-            statusText: 'För kortfattat / Ej tillräckligt',
-            hintText: questionCriteria ? `Kriterier/Förväntat svar: ${questionCriteria}` : 'Svaret är för korthugget. Förklara mer ingående vad du menar.'
-        };
-    }
-
-    if (questionCriteria && questionCriteria.trim() !== '') {
-        const criteriaKeywords = questionCriteria.toLowerCase().split(/[\s,.-]+/).filter(w => w.length > 3);
-        const matchCount = criteriaKeywords.filter(kw => lowerAns.includes(kw)).length;
-        const matchRatio = criteriaKeywords.length > 0 ? matchCount / criteriaKeywords.length : 0;
-
-        if (matchRatio >= 0.5 || ans.length > 90) {
+    if (isTicket) {
+        // Entry / Exit Ticket utan E, C, A nivåer
+        if (ans.length < 10) {
             return {
-                plupp: 'darkgreen',
-                statusText: 'Mörkgrön (Utvecklat och utförligt)',
-                hintText: `Klockrent! Du täcker in nyckelbegreppen (${questionCriteria}) och förklarar med egna ord.`
-            };
-        } else if (matchRatio > 0.1 || ans.length >= 25) {
-            return {
-                plupp: 'lightgreen',
-                statusText: 'Ljusgrön (Godkänt och grundläggande)',
-                hintText: `Bra grund! Du berör rätt område. För mörkgrön nivå, inkludera även: ${questionCriteria}`
+                plupp: 'red',
+                statusText: 'Fel / För kortfattat',
+                hintText: questionExplanation ? `Svaret är för kort. Förklaring för begreppet: ${questionExplanation}` : 'Utveckla din förklaring av begreppet ytterligare.'
             };
         } else {
             return {
-                plupp: 'red',
-                statusText: 'Röd (Saknar viktiga delar)',
-                hintText: `Svaret saknar centrala begrepp. Jämför ditt svar med målet: ${questionCriteria}`
+                plupp: 'lightgreen',
+                statusText: 'Rätt / Godkänt begrepp',
+                hintText: 'Bra jobbat! Du visar att du har förstått begreppet.'
             };
         }
     }
 
-    if (ans.length >= 80) {
+    // Vanliga Prov / Test med E, C, A nivåer
+    if (ans.length < 12) {
+        return {
+            plupp: 'red',
+            statusText: 'Ej helt godkänt / Kortfattat',
+            hintText: questionCriteria ? `Krav för nivåerna: ${questionCriteria}` : 'Svaret är för korthugget. Förklara mer ingående vad du menar.'
+        };
+    }
+
+    if (questionCriteria && questionCriteria.trim() !== '') {
+        const lowerCrit = questionCriteria.toLowerCase();
+        
+        if (ans.length > 100 || (lowerCrit.includes('a') && ans.length > 70)) {
+            return {
+                plupp: 'darkgreen',
+                statusText: 'Välutvecklat (A-nivå)',
+                hintText: `Klockrent! Du uppfyller kraven för A-nivå (${questionCriteria}) genom att resonera välutvecklat och tydligt.`
+            };
+        } else if (ans.length >= 35 || lowerCrit.includes('c')) {
+            return {
+                plupp: 'lightgreen',
+                statusText: 'Utvecklat (C-nivå)',
+                hintText: `Bra grund! Du uppfyller kraven för C-nivå. För att nå A-nivå (Välutvecklat), utveckla orsakerna ytterligare enligt: ${questionCriteria}`
+            };
+        } else {
+            return {
+                plupp: 'lightgreen',
+                statusText: 'Enkelt (E-nivå)',
+                hintText: `Godkänt på E-nivå! Du ger ett enkelt svar. För högre nivåer (C/A), inkludera fler detaljer baserat på kraven: ${questionCriteria}`
+            };
+        }
+    }
+
+    // Automatisk nivåbedömning om ingen rad för krav uppgetts
+    if (ans.length >= 85) {
         return {
             plupp: 'darkgreen',
-            statusText: 'Mörkgrön (Utvecklat och välmotiverat)',
-            hintText: 'Mycket bra och utförligt svar! Du visar ett fördjupat resonemang.'
+            statusText: 'Välutvecklat (A-nivå)',
+            hintText: 'Mycket bra och välutvecklat svar! Du visar ett fördjupat och nyanserat resonemang.'
+        };
+    } else if (ans.length >= 30) {
+        return {
+            plupp: 'lightgreen',
+            statusText: 'Utvecklat (C-nivå)',
+            hintText: 'Bra och utvecklat svar! För att nå A-nivå kan du ge ännu fler konkreta exempel eller förklara bakomliggande orsak/konsekvens.'
         };
     } else {
         return {
             plupp: 'lightgreen',
-            statusText: 'Ljusgrön (Godkänt och grundläggande)',
-            hintText: 'Bra och korrekt grund. För att utveckla svaret ytterligare kan du ge konkreta exempel eller förklara orsaker och konsekvenser.'
+            statusText: 'Enkelt (E-nivå)',
+            hintText: 'Godkänt svar på en enkel och grundläggande nivå. Bygg ut dina svar med mer förklaringar till nästa gång.'
         };
     }
 }
@@ -605,6 +655,7 @@ async function handleExamSubmit(e) {
     exitFullScreen();
 
     const exam = state.activeExam;
+    const isTicket = ['Entryticket', 'Exitticket'].includes(exam.type);
 
     localStorage.setItem(`submitted_device_${exam.id}`, 'true');
 
@@ -619,7 +670,7 @@ async function handleExamSubmit(e) {
 
     (exam.questions || []).forEach((q, idx) => {
         const studentAns = state.answers['q_' + idx] || '';
-        const evalRes = evaluateStudentAnswer(studentAns, q.criteria, q.explanation, q.text);
+        const evalRes = evaluateStudentAnswer(studentAns, q.criteria, q.explanation, q.text, isTicket);
 
         if (evalRes.plupp === 'darkgreen') darkGreenCount++;
         else if (evalRes.plupp === 'lightgreen') greenCount++;
@@ -636,12 +687,16 @@ async function handleExamSubmit(e) {
     });
 
     let summaryComment = '';
-    if (redCount > 0) {
-        summaryComment = 'Framåtsyftande analys: Några frågor kräver mer fördjupning eller repetition. Läs igenom återkopplingen per fråga och stäm av begreppen inför nästa tillfälle.';
-    } else if (darkGreenCount >= greenCount) {
-        summaryComment = 'Framåtsyftande analys: Du visar en mycket god förståelse och ett utvecklat tänkande. Fortsätt att hålla samma höga kvalitet i dina motiveringar!';
+    if (isTicket) {
+        summaryComment = 'Snyggt jobbat! Din Ticket är inlämnad och granskad.';
     } else {
-        summaryComment = 'Framåtsyftande analys: Du behärskar grunderna väl. För att nå en ännu mer utvecklad nivå till nästa gång, försök koppla dina svar till orsak, konsekvens och konkreta exempel.';
+        if (redCount > 0) {
+            summaryComment = 'Framåtsyftande analys: Några frågor kräver mer fördjupning. Läs igenom återkopplingen per fråga och stäm av kraven inför nästa tillfälle.';
+        } else if (darkGreenCount >= greenCount) {
+            summaryComment = 'Framåtsyftande analys: Du visar en mycket god förståelse och ett välutvecklat tänkande på A-nivå. Fortsätt hålla samma höga kvalitet!';
+        } else {
+            summaryComment = 'Framåtsyftande analys: Du behärskar grunderna väl på E/C-nivå. För att nå högre nivåer till nästa gång, utveckla dina motiveringar ytterligare med orsaker och exempel.';
+        }
     }
 
     const submission = {
@@ -652,6 +707,7 @@ async function handleExamSubmit(e) {
         status: 'Inlämnat',
         secondsSpent: state.examSeconds,
         warnings: state.warningCount,
+        reviewed: false,
         questionResults: questionResults,
         summaryComment: summaryComment,
         answers: state.answers
@@ -679,7 +735,6 @@ function renderStudentResult(container) {
                 <p class="text-xs text-slate-500">Tack ${sub.studentName || 'Elev'}! Tidsåtgång: ${mins} min ${state.warningCount > 0 ? '• Varningar: ' + state.warningCount : ''}</p>
             </div>
 
-            <!-- RESPONS PER FRÅGA -->
             <div class="space-y-4 pt-2">
                 <h3 class="text-xs font-bold uppercase tracking-wider text-slate-500">Din Respons per fråga:</h3>
                 ${(sub.questionResults || []).map(qR => {
@@ -700,7 +755,6 @@ function renderStudentResult(container) {
                 }).join('')}
             </div>
 
-            <!-- FRAMÅTSYFTANDE KOMMENTAR I SLUTET -->
             <div class="p-4 rounded-xl bg-purple-50 border border-purple-200 text-xs text-purple-900 font-medium leading-relaxed">
                 <strong class="block text-purple-900 mb-1 font-bold">💬 Sammanfattning & Framåtsyftande analys:</strong>
                 ${sub.summaryComment || ''}
@@ -719,7 +773,7 @@ function renderAdmin(container, exams) {
     const filteredExams = exams.filter(e => isArchive ? e.archived : !e.archived);
 
     container.innerHTML = `
-        <div class="space-y-6">
+        <div class="space-y-6 allow-select">
             <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
                 <div>
                     <h2 class="text-2xl font-bold text-slate-900">${isArchive ? 'Arkiverade Uppgifter' : 'Testpanelen & Hantering'}</h2>
@@ -815,11 +869,24 @@ function closeProjectorModal() {
     document.getElementById('projectorModal').classList.add('hidden');
 }
 
-// "VISA PÅ SKÄRM" - RENA LISTOR UTAN PLUPPAR/BEDÖMNINGAR
+// "VISA PÅ SKÄRM" - MED STÖD FÖR INAKTIVERAD "EJ INLÄMNAD" SAMT KLOCKSLAG FÖR INLÄMNING
 async function updateProjectorLists() {
     const exams = await getExams();
     const exam = exams.find(e => e.id === state.selectedExamId);
     if (!exam) return;
+
+    const isActive = (exam.active === true || exam.active === 'true');
+    const ongoingTitleEl = document.getElementById('projOngoingTitle');
+    
+    if (ongoingTitleEl) {
+        if (isActive) {
+            ongoingTitleEl.className = "text-lg font-bold text-amber-400 mb-4 flex items-center gap-2";
+            ongoingTitleEl.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Pågående (<span id="countOngoing">0</span>)`;
+        } else {
+            ongoingTitleEl.className = "text-lg font-bold text-slate-400 mb-4 flex items-center gap-2";
+            ongoingTitleEl.innerHTML = `<i class="fa-solid fa-clock-rotate-left"></i> Ej inlämnad (<span id="countOngoing">0</span>)`;
+        }
+    }
 
     const ongoing = exam.activeStudents || [];
     const submitted = exam.submissions || [];
@@ -828,13 +895,13 @@ async function updateProjectorLists() {
     document.getElementById('countSubmitted').innerText = submitted.length;
 
     const listOngoing = document.getElementById('listOngoing');
-    listOngoing.innerHTML = ongoing.length === 0 ? '<div class="text-xs text-slate-500 py-2">Inga elever pågår för stunden.</div>' :
+    listOngoing.innerHTML = ongoing.length === 0 ? '<div class="text-xs text-slate-500 py-2">Inga elever för stunden.</div>' :
         ongoing.map(s => `
             <div class="flex items-center justify-between p-3 rounded-xl bg-slate-800 border border-slate-700/80 text-sm">
                 <div class="flex items-center space-x-2">
                     <span class="font-bold text-slate-200">${s.name}</span>
                     ${s.warnings === 1 ? '<span class="px-2 py-0.5 bg-amber-500/20 text-amber-400 text-xs font-bold rounded-full border border-amber-500/40"><i class="fa-solid fa-triangle-exclamation"></i> Gult kort</span>' : ''}
-                    ${s.locked ? '<span class="px-2 py-0.5 bg-red-500/20 text-red-400 text-xs font-bold rounded-full border border-red-500/40"><i class="fa-solid fa-lock"></i> Rött kort</span>' : ''}
+                    ${s.locked ? '<span class="px-2 py-0.5 bg-red-500/20 text-red-400 text-xs font-bold rounded-full border border-red-500/40"><i class="fa-solid fa-lock"></i> Rött kort / Låst</span>' : ''}
                 </div>
                 <div class="flex items-center space-x-2">
                     <span class="text-xs font-mono text-slate-400">${s.joinedAt || ''}</span>
@@ -849,15 +916,12 @@ async function updateProjectorLists() {
 
     const listSubmitted = document.getElementById('listSubmitted');
     listSubmitted.innerHTML = submitted.length === 0 ? '<div class="text-xs text-slate-500 py-2">Inga elever har lämnat in ännu.</div>' :
-        submitted.map(s => {
-            const mins = Math.floor((s.secondsSpent || 0) / 60);
-            return `
-                <div class="flex items-center justify-between p-3 rounded-xl bg-slate-800 border border-slate-700/80 text-sm">
-                    <span class="font-bold text-slate-200">${s.studentName}</span>
-                    <span class="text-xs font-mono text-slate-400">${mins} min</span>
-                </div>
-            `;
-        }).join('');
+        submitted.map(s => `
+            <div class="flex items-center justify-between p-3 rounded-xl bg-slate-800 border border-slate-700/80 text-sm">
+                <span class="font-bold text-slate-200">${s.studentName}</span>
+                <span class="text-xs font-mono text-slate-400">${s.submittedAt || ''}</span>
+            </div>
+        `).join('');
 }
 
 async function adminResumeStudent(studentName) {
@@ -890,7 +954,7 @@ function renderAdminBoard(container, exams) {
     const subs = exam.submissions || [];
 
     container.innerHTML = `
-        <div class="space-y-6">
+        <div class="space-y-6 allow-select">
             <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex items-center justify-between">
                 <div>
                     <h2 class="text-2xl font-bold text-slate-900">${exam.title} - Elevöversikt</h2>
@@ -907,15 +971,15 @@ function renderAdminBoard(container, exams) {
                         <tr class="bg-slate-50 border-b border-slate-200 text-xs font-bold text-slate-500 uppercase">
                             <th class="p-4">Elev</th>
                             <th class="p-4">Status</th>
-                            <th class="p-4">Tid</th>
+                            <th class="p-4">Inlämnad klockan</th>
                             <th class="p-4 text-center">Pluppar per fråga</th>
-                            <th class="p-4 text-right">Åtgärd</th>
+                            <th class="p-4 text-right">Åtgärder</th>
                         </tr>
                     </thead>
                     <tbody class="divide-y divide-slate-200 text-sm">
                         ${subs.length === 0 ? '<tr><td colspan="5" class="p-6 text-center text-slate-400">Inga elever har lämnat in ännu.</td></tr>' : ''}
                         ${subs.map(s => {
-                            const mins = Math.floor((s.secondsSpent || 0) / 60);
+                            const isReviewed = !!s.reviewed;
 
                             return `
                                 <tr class="hover:bg-slate-50">
@@ -923,7 +987,7 @@ function renderAdminBoard(container, exams) {
                                         ${s.studentName} <i class="fa-solid fa-circle-info text-xs ml-1 opacity-60"></i>
                                     </td>
                                     <td class="p-4"><span class="px-2.5 py-1 text-xs font-semibold rounded-full bg-emerald-100 text-emerald-800">${s.status || 'Inlämnat'}</span></td>
-                                    <td class="p-4 font-mono text-xs text-slate-500">${mins} min</td>
+                                    <td class="p-4 font-mono text-xs text-slate-500">${s.submittedAt || ''}</td>
                                     <td class="p-4 text-center">
                                         <div class="flex items-center justify-center space-x-1.5">
                                             ${(s.questionResults || []).map((qR, qIdx) => {
@@ -932,7 +996,11 @@ function renderAdminBoard(container, exams) {
                                             }).join('')}
                                         </div>
                                     </td>
-                                    <td class="p-4 text-right">
+                                    <td class="p-4 text-right space-x-2">
+                                        <!-- "Granska" knapp i gult, byts till grönt när den klickas -->
+                                        <button onclick="toggleStudentReviewed('${s.id}')" class="px-3 py-1.5 font-bold text-xs rounded-lg shadow-sm transition ${isReviewed ? 'bg-emerald-600 text-white' : 'bg-amber-400 hover:bg-amber-500 text-slate-900'}">
+                                            ${isReviewed ? '✅ Granskad' : 'Granska'}
+                                        </button>
                                         <button onclick="confirmResetSubmission('${s.id}', '${s.studentName}')" class="px-3 py-1.5 bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 font-semibold text-xs rounded-lg transition">
                                             Ångra inlämningen
                                         </button>
@@ -945,6 +1013,17 @@ function renderAdminBoard(container, exams) {
             </div>
         </div>
     `;
+}
+
+async function toggleStudentReviewed(subId) {
+    const exam = state.cachedExams.find(e => e.id === state.selectedExamId);
+    if (!exam || !exam.submissions) return;
+    const sub = exam.submissions.find(s => s.id === subId);
+    if (sub) {
+        sub.reviewed = !sub.reviewed;
+        await saveExamToDB(exam);
+        render();
+    }
 }
 
 async function confirmResetSubmission(subId, studentName) {
@@ -976,7 +1055,7 @@ function openStudentDetailModal(subId) {
             <div>
                 <span class="text-xs font-bold text-red-600 uppercase tracking-wider">Elevsvar & Genererad Respons</span>
                 <h2 class="text-2xl font-bold text-slate-900">${sub.studentName}</h2>
-                <p class="text-xs text-slate-500">${exam.title} • Inlämnad: ${sub.submittedAt || ''} • Tid: ${mins} min</p>
+                <p class="text-xs text-slate-500">${exam.title} • Inlämnad klockan: ${sub.submittedAt || ''} • Tid: ${mins} min</p>
             </div>
 
             <div class="space-y-4">
@@ -992,7 +1071,7 @@ function openStudentDetailModal(subId) {
                                 </span>
                             </div>
                             <div class="p-3 bg-white rounded-lg border border-slate-200 text-xs font-mono text-slate-700 whitespace-pre-wrap">${qR.studentAnswer || 'Inget svar'}</div>
-                            <div class="text-xs text-slate-600 bg-amber-50 p-2.5 rounded-lg border border-amber-200"><strong>Kunde svarat / Tänka på:</strong> ${qR.hintText}</div>
+                            <div class="text-xs text-slate-600 bg-amber-50 p-2.5 rounded-lg border border-amber-200"><strong>Analys & Framåtblick:</strong> ${qR.hintText}</div>
                         </div>
                     `;
                 }).join('')}
@@ -1079,13 +1158,14 @@ function syncFormToState() {
     if (typeEl) state.editingExam.type = typeEl.value;
 }
 
+// SKAPARLÄGE MED TRE RADER (FRÅGA, SVARSALTERNATIV/MODELLSVAR, KRAV FÖR E,C,A)
 function renderAdminEdit(container) {
     const exam = state.editingExam || {};
     const isCustomClass = !['7H', '8H', '9H'].includes(exam.klass);
     const isTicket = ['Entryticket', 'Exitticket'].includes(exam.type);
 
     container.innerHTML = `
-        <div class="max-w-3xl mx-auto bg-white rounded-2xl border border-slate-200 shadow-xl p-6 sm:p-8 space-y-6">
+        <div class="max-w-3xl mx-auto bg-white rounded-2xl border border-slate-200 shadow-xl p-6 sm:p-8 space-y-6 allow-select">
             <div class="flex items-center justify-between border-b border-slate-200 pb-4">
                 <h2 class="text-2xl font-bold text-slate-900">${exam.title ? 'Redigera uppgift' : 'Skapa Ny Uppgift'}</h2>
                 <button onclick="switchView('admin')" class="text-sm font-semibold text-slate-500">Avbryt</button>
@@ -1117,7 +1197,7 @@ function renderAdminEdit(container) {
                 <div class="grid grid-cols-1 sm:grid-cols-12 gap-4 items-end">
                     <div class="sm:col-span-5">
                         <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Titel på uppgift</label>
-                        <input type="text" id="editTitle" required value="${exam.title || ''}" placeholder="t.ex. Industriella Revolutionen"
+                        <input type="text" id="editTitle" required value="${exam.title || ''}" placeholder="t.ex. Franska Revolutionen"
                             class="w-full px-4 py-2.5 rounded-xl border border-slate-300 text-sm">
                     </div>
 
@@ -1146,7 +1226,7 @@ function renderAdminEdit(container) {
                 </div>
 
                 <div class="border-t border-slate-200 pt-5 space-y-4">
-                    <h3 class="font-bold text-slate-900">${isTicket ? 'Begrepp & Förklaringar' : 'Frågor & Bedömningskriterier'}</h3>
+                    <h3 class="font-bold text-slate-900">${isTicket ? 'Begrepp & Förklaringar' : 'Frågor, Modellsvar & Betygskrav'}</h3>
                     <div class="space-y-4">
                         ${(exam.questions || []).map((q, idx) => renderEditQuestionCard(q, idx, (exam.questions || []).length, isTicket)).join('')}
                     </div>
@@ -1194,9 +1274,8 @@ function renderEditQuestionCard(q, idx, totalQuestions, isTicket) {
                         <button type="button" onclick="removeQuestion(${idx})" class="text-red-500 text-xs ml-2"><i class="fa-solid fa-trash"></i></button>
                     </div>
                 </div>
-                <input type="text" value="${q.text || ''}" onchange="state.editingExam.questions[${idx}].text = this.value" placeholder="Begrepp (t.ex. Urbanisering)..." class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm">
-                <input type="text" value="${q.explanation || ''}" onchange="state.editingExam.questions[${idx}].explanation = this.value" placeholder="Förklaring/Svar för begreppet..." class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm">
-                <input type="text" value="${q.criteria || ''}" onchange="state.editingExam.questions[${idx}].criteria = this.value" placeholder="Bedömningskriterier / Krav för nivåer E, C, A (valfritt)..." class="w-full px-3 py-1.5 rounded-lg border border-slate-200 text-xs bg-white text-slate-600">
+                <input type="text" value="${q.text || ''}" onchange="state.editingExam.questions[${idx}].text = this.value" placeholder="Rad 1: Begrepp (t.ex. Urbanisering)..." class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm">
+                <input type="text" value="${q.explanation || ''}" onchange="state.editingExam.questions[${idx}].explanation = this.value" placeholder="Rad 2: Förklaring/Svar för begreppet..." class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm">
             </div>
         `;
     }
@@ -1211,8 +1290,9 @@ function renderEditQuestionCard(q, idx, totalQuestions, isTicket) {
                     <button type="button" onclick="removeQuestion(${idx})" class="text-red-500 text-xs ml-2"><i class="fa-solid fa-trash"></i></button>
                 </div>
             </div>
-            <input type="text" value="${q.text || ''}" onchange="state.editingExam.questions[${idx}].text = this.value" placeholder="Skriv frågan..." class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm">
-            <input type="text" value="${q.criteria || ''}" onchange="state.editingExam.questions[${idx}].criteria = this.value" placeholder="Bedömningskriterier / Krav för nivåer E, C, A (valfritt)..." class="w-full px-3 py-1.5 rounded-lg border border-slate-200 text-xs bg-white text-slate-600">
+            <input type="text" value="${q.text || ''}" onchange="state.editingExam.questions[${idx}].text = this.value" placeholder="Rad 1: Frågan (t.ex. Varför startade Franska Revolutionen?)..." class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm">
+            <input type="text" value="${q.explanation || ''}" onchange="state.editingExam.questions[${idx}].explanation = this.value" placeholder="Rad 2: Exempel på svarsalternativ/modellsvar..." class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm">
+            <input type="text" value="${q.criteria || ''}" onchange="state.editingExam.questions[${idx}].criteria = this.value" placeholder="Rad 3: Krav (t.ex. För E - en orsak, för C - två orsaker, för A - tre orsaker)..." class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm bg-white text-slate-800">
         </div>
     `;
 }
