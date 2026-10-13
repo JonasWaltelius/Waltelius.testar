@@ -13,6 +13,9 @@
         body { font-family: 'Inter', sans-serif; }
         .no-select { user-select: none; -webkit-user-select: none; }
         .allow-select { user-select: text; -webkit-user-select: text; }
+        .match-card { cursor: pointer; transition: all 0.2s ease; }
+        .match-card.selected { border-color: #dc2626; background-color: #fef2f2; }
+        .match-card.paired { border-color: #10b981; background-color: #ecfdf5; cursor: default; }
     </style>
 </head>
 <body class="bg-slate-50 text-slate-800 min-h-screen flex flex-col antialiased no-select">
@@ -125,7 +128,9 @@ const state = {
     revealedCodes: {},
     projectorInterval: null,
     lastSubmittedData: null,
-    isSubmitting: false
+    isSubmitting: false,
+    selectedLeftCard: null,
+    matchingPairsState: {}
 };
 
 function enterFullScreen() {
@@ -450,13 +455,21 @@ function handleWelcomeSubmit(e) {
         return;
     }
 
-    let preparedQuestions = (originalExam.questions || []);
+    let preparedQuestions = (originalExam.questions || []).map((q) => {
+        const qCopy = { ...q };
+        if (q.type === 'mcq' && q.options) {
+            qCopy.options = shuffleArray(q.options);
+        }
+        return qCopy;
+    });
+
     if (['Entryticket', 'Exitticket'].includes(originalExam.type)) {
         preparedQuestions = shuffleArray(preparedQuestions);
     }
 
     state.currentUser = { name, class: klass };
     state.activeExam = { ...originalExam, questions: preparedQuestions };
+    state.matchingPairsState = {};
     switchView('student_code');
 }
 
@@ -526,7 +539,7 @@ function renderStudentExam(container) {
     const isTicket = ['Entryticket', 'Exitticket'].includes(exam.type);
 
     container.innerHTML = `
-        <div class="max-w-2xl mx-auto space-y-6">
+        <div class="max-w-3xl mx-auto space-y-6">
             <div class="bg-gradient-to-r from-red-600 to-red-800 text-white p-6 rounded-2xl shadow-md flex items-center justify-between">
                 <div>
                     <span class="text-xs uppercase font-semibold opacity-80">${exam.type} • ${exam.category}</span>
@@ -541,16 +554,7 @@ function renderStudentExam(container) {
 
             <form onsubmit="handleExamSubmit(event)" class="space-y-6">
                 ${questions.length === 0 ? '<div class="bg-white p-6 rounded-2xl border text-center text-slate-400">Denna uppgift saknar frågor än så länge.</div>' : ''}
-                ${questions.map((q, idx) => `
-                    <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-3">
-                        <div class="text-xs font-bold text-red-600">${isTicket ? 'Begrepp ' + (idx + 1) : 'Fråga ' + (idx + 1)}</div>
-                        <h3 class="text-base font-bold text-slate-900">${q.text || 'Begrepp/Fråga'}</h3>
-                        ${isTicket && q.explanation ? `<div class="text-xs bg-slate-100 p-2.5 rounded-lg text-slate-600"><strong>Förklaring/Kontext:</strong> ${q.explanation}</div>` : ''}
-                        ${!isTicket && q.criteria ? `<div class="text-xs text-amber-800 bg-amber-50 p-2.5 rounded-lg border border-amber-200"><strong>Betygskrav för nivån:</strong> ${q.criteria}</div>` : ''}
-                        <textarea required onpaste="return false" oncopy="return false" oncut="return false" onchange="state.answers['q_${idx}'] = this.value" rows="3" 
-                            placeholder="${isTicket ? 'Skriv förklaring/resonemang kring begreppet...' : 'Skriv ditt svar här...'}" class="w-full p-3.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-red-500 outline-none text-sm"></textarea>
-                    </div>
-                `).join('')}
+                ${questions.map((q, idx) => renderStudentQuestion(q, idx, isTicket)).join('')}
 
                 <button id="submitBtn" type="submit" class="w-full py-3.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl shadow-lg transition flex items-center justify-center gap-2">
                     <span>Lämna in svar</span>
@@ -560,7 +564,135 @@ function renderStudentExam(container) {
     `;
 }
 
-// DIREKTANROP TILL SUPABASE EDGE FUNCTION "evaluate-answers" MED GEMINI AI
+function renderStudentQuestion(q, idx, isTicket) {
+    const qType = q.type || 'text';
+
+    if (qType === 'matching') {
+        if (!state.matchingPairsState[idx]) {
+            const leftItems = (q.pairs || []).map((p, pIdx) => ({ id: pIdx, text: p.left }));
+            const rightItems = shuffleArray((q.pairs || []).map((p, pIdx) => ({ id: pIdx, text: p.right })));
+            state.matchingPairsState[idx] = { leftItems, rightItems, connections: {} };
+        }
+        const matchState = state.matchingPairsState[idx];
+
+        return `
+            <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+                <div class="text-xs font-bold text-red-600">Uppgift ${idx + 1}: Para ihop</div>
+                <h3 class="text-base font-bold text-slate-900">${q.text || 'Koppla samman rätt begrepp med rätt förklaring'}</h3>
+                <p class="text-xs text-slate-500">Klicka först på ett begrepp till vänster och sedan på rätt förklaring till höger.</p>
+                
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
+                    <div class="space-y-2">
+                        <span class="text-xs font-bold text-slate-400 uppercase tracking-wider block mb-1">Begrepp</span>
+                        ${matchState.leftItems.map(l => {
+                            const pairedRightId = matchState.connections[l.id];
+                            const isPaired = pairedRightId !== undefined;
+                            const isSelected = state.selectedLeftCard && state.selectedLeftCard.qIdx === idx && state.selectedLeftCard.lId === l.id;
+                            
+                            let cardClass = 'bg-slate-50 border-slate-200 text-slate-800';
+                            if (isSelected) cardClass = 'bg-red-50 border-red-500 text-red-900 font-bold shadow-sm';
+                            else if (isPaired) cardClass = 'bg-emerald-50 border-emerald-400 text-emerald-900 font-medium';
+
+                            return `
+                                <div onclick="selectLeftCard(${idx},${l.id})" class="match-card p-3 rounded-xl border-2 text-sm flex items-center justify-between ${cardClass}">
+                                    <span>${l.text}</span>${isPaired ? '<i class="fa-solid fa-link text-emerald-600 text-xs"></i>' : '<i class="fa-solid fa-hand-pointer text-slate-300 text-xs"></i>'}
+                                </div>
+                            `;
+                        }).join('')}
+                    </div>
+
+                    <div class="space-y-2">
+                        <span class="text-xs font-bold text-slate-400 uppercase tracking-wider block mb-1">Förklaringar / Kopplingar</span>
+                        ${matchState.rightItems.map(r => {
+                            const connectedLeftId = Object.keys(matchState.connections).find(k => matchState.connections[k] === r.id);
+                            const isPaired = connectedLeftId !== undefined;
+                            
+                            let cardClass = 'bg-slate-50 border-slate-200 text-slate-800';
+                            if (isPaired) cardClass = 'bg-emerald-50 border-emerald-400 text-emerald-900 font-medium';
+
+                            return `
+                                <div onclick="selectRightCard(${idx},${r.id})" class="match-card p-3 rounded-xl border-2 text-sm flex items-center justify-between ${cardClass}">
+                                    <span>${r.text}</span>${isPaired ? '<i class="fa-solid fa-check-circle text-emerald-600 text-xs"></i>' : ''}
+                                </div>
+                            `;
+                        }).join('')}
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
+    if (qType === 'mcq') {
+        const options = q.options || [];
+        const currentSelected = state.answers['q_' + idx] || [];
+
+        return `
+            <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-3">
+                <div class="text-xs font-bold text-red-600">Fråga ${idx + 1}: Välj rätt alternativ</div>
+                <h3 class="text-base font-bold text-slate-900">${q.text || 'Läs frågan'}</h3>
+                <p class="text-xs text-slate-500">Välj ett eller flera alternativ som stämmer.</p>
+                <div class="space-y-2 pt-2">
+                    ${options.map((opt, optIdx) => {
+                        const isChecked = Array.isArray(currentSelected) && currentSelected.includes(opt);
+                        return `
+                            <label class="flex items-center space-x-3 p-3 rounded-xl border border-slate-200 hover:bg-slate-50 cursor-pointer text-sm">
+                                <input type="checkbox" ${isChecked ? 'checked' : ''} onchange="toggleMcqOption(${idx}, '${opt.replace(/'/g, "\\'")}', this.checked)" class="w-4 h-4 text-red-600 rounded focus:ring-red-500 border-slate-300">
+                                <span class="font-medium text-slate-800">${opt}</span>
+                            </label>
+                        `;
+                    }).join('')}
+                </div>
+            </div>
+        `;
+    }
+
+    return `
+        <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-3">
+            <div class="text-xs font-bold text-red-600">${isTicket ? 'Begrepp ' + (idx + 1) : 'Fråga ' + (idx + 1)}</div>
+            <h3 class="text-base font-bold text-slate-900">${q.text || 'Begrepp/Fråga'}</h3>
+            ${isTicket && q.explanation ? `<div class="text-xs bg-slate-100 p-2.5 rounded-lg text-slate-600"><strong>Förklaring/Kontext:</strong> ${q.explanation}</div>` : ''}
+            ${!isTicket && q.criteria ? `<div class="text-xs text-amber-800 bg-amber-50 p-2.5 rounded-lg border border-amber-200"><strong>Betygskrav för nivån:</strong> ${q.criteria}</div>` : ''}
+            <textarea required onpaste="return false" oncopy="return false" oncut="return false" onchange="state.answers['q_${idx}'] = this.value" rows="3" 
+                placeholder="${isTicket ? 'Skriv förklaring/resonemang kring begreppet...' : 'Skriv ditt svar här...'}" class="w-full p-3.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-red-500 outline-none text-sm"></textarea>
+        </div>
+    `;
+}
+
+function selectLeftCard(qIdx, lId) {
+    state.selectedLeftCard = { qIdx, lId };
+    render();
+}
+
+function selectRightCard(qIdx, rId) {
+    if (state.selectedLeftCard && state.selectedLeftCard.qIdx === qIdx) {
+        const lId = state.selectedLeftCard.lId;
+        state.matchingPairsState[qIdx].connections[lId] = rId;
+        state.selectedLeftCard = null;
+
+        const pairs = state.activeExam.questions[qIdx].pairs || [];
+        const formattedAnswers = Object.keys(state.matchingPairsState[qIdx].connections).map(lKey => {
+            const leftText = state.matchingPairsState[qIdx].leftItems.find(item => item.id == lKey)?.text;
+            const rightText = state.matchingPairsState[qIdx].rightItems.find(item => item.id == state.matchingPairsState[qIdx].connections[lKey])?.text;
+            return `${leftText} -> ${rightText}`;
+        });
+        state.answers['q_' + qIdx] = formattedAnswers.join(', ');
+        render();
+    }
+}
+
+function toggleMcqOption(qIdx, optionText, isChecked) {
+    if (!Array.isArray(state.answers['q_' + qIdx])) {
+        state.answers['q_' + qIdx] = [];
+    }
+    if (isChecked) {
+        if (!state.answers['q_' + qIdx].includes(optionText)) {
+            state.answers['q_' + qIdx].push(optionText);
+        }
+    } else {
+        state.answers['q_' + qIdx] = state.answers['q_' + qIdx].filter(item => item !== optionText);
+    }
+}
+
 async function evaluateAnswersWithAI(questions, answers, isTicket) {
     try {
         const response = await fetch(`${SUPABASE_URL}/functions/v1/evaluate-answers`, {
@@ -577,16 +709,30 @@ async function evaluateAnswersWithAI(questions, answers, isTicket) {
         if (data.questionResults && data.summaryComment) {
             return data;
         }
-        throw new Error("Felaktigt AI-format");
+        throw new Error("Felaktigt format");
     } catch (e) {
-        // Fallback-analys om nätverksfel uppstår mot Edge Function
         const questionResults = questions.map((q, idx) => {
-            const ans = (answers['q_' + idx] || '').trim();
-            const plupp = ans.length > 80 ? 'darkgreen' : ans.length >= 25 ? 'lightgreen' : 'red';
+            const rawAns = answers['q_' + idx];
+            const ansStr = Array.isArray(rawAns) ? rawAns.join(', ') : (rawAns || '').trim();
+
+            if (q.type === 'mcq') {
+                const correctOpts = q.correctOptions || [];
+                const isCorrect = Array.isArray(rawAns) && correctOpts.length === rawAns.length && correctOpts.every(val => rawAns.includes(val));
+                return {
+                    questionIdx: idx + 1,
+                    questionText: q.text,
+                    studentAnswer: ansStr || 'Inget valt',
+                    plupp: isCorrect ? 'lightgreen' : 'red',
+                    statusText: isCorrect ? 'Rätt svar' : 'Felaktigt val',
+                    hintText: isCorrect ? 'Rätt valda alternativ!' : `Rätt svar var: ${correctOpts.join(', ')}`
+                };
+            }
+
+            const plupp = ansStr.length > 80 ? 'darkgreen' : ansStr.length >= 20 ? 'lightgreen' : 'red';
             return {
                 questionIdx: idx + 1,
                 questionText: q.text,
-                studentAnswer: ans,
+                studentAnswer: ansStr || 'Inget svar',
                 plupp: plupp,
                 statusText: plupp === 'darkgreen' ? 'Välutvecklat (A-nivå)' : plupp === 'lightgreen' ? 'Godkänt (E/C-nivå)' : 'Ofullständigt / Ej godkänt',
                 hintText: q.criteria ? `Innehåll och betygskrav: ${q.criteria}` : 'Utveckla din motivering och ge konkreta exempel.'
@@ -609,7 +755,7 @@ async function handleExamSubmit(e) {
     const submitBtn = document.getElementById('submitBtn');
     if (submitBtn) {
         submitBtn.disabled = true;
-        submitBtn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> <span>Analyserar svar med AI...</span>`;
+        submitBtn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> <span>Analyserar svar...</span>`;
     }
 
     const exam = state.activeExam;
@@ -621,7 +767,6 @@ async function handleExamSubmit(e) {
         exam.activeStudents = exam.activeStudents.filter(s => s.name !== state.currentUser.name);
     }
 
-    // Anropar den riktiga Gemini AI-analysen via Supabase Edge Function
     const aiEvaluation = await evaluateAnswersWithAI(exam.questions || [], state.answers, isTicket);
 
     const submission = {
@@ -661,7 +806,7 @@ function renderStudentResult(container) {
             </div>
 
             <div class="space-y-4 pt-2">
-                <h3 class="text-xs font-bold uppercase tracking-wider text-slate-500">AI-Analys & Respons per fråga:</h3>
+                <h3 class="text-xs font-bold uppercase tracking-wider text-slate-500">Respons per fråga:</h3>
                 ${(sub.questionResults || []).map(qR => {
                     const pluppClass = qR.plupp === 'darkgreen' ? 'bg-emerald-700' : qR.plupp === 'red' ? 'bg-red-500' : 'bg-emerald-400';
                     return `
@@ -674,14 +819,14 @@ function renderStudentResult(container) {
                                 </span>
                             </div>
                             <div class="p-2.5 bg-white rounded-lg border border-slate-200 text-xs text-slate-700"><strong>Ditt svar:</strong> ${qR.studentAnswer || 'Inget svar'}</div>
-                            <div class="text-xs text-slate-600 bg-amber-50 p-2.5 rounded-lg border border-amber-200"><strong>AI-Feedback & Framåtblick:</strong> ${qR.hintText}</div>
+                            <div class="text-xs text-slate-600 bg-amber-50 p-2.5 rounded-lg border border-amber-200"><strong>Återkoppling:</strong> ${qR.hintText}</div>
                         </div>
                     `;
                 }).join('')}
             </div>
 
             <div class="p-4 rounded-xl bg-purple-50 border border-purple-200 text-xs text-purple-900 font-medium leading-relaxed">
-                <strong class="block text-purple-900 mb-1 font-bold">💬 Sammanfattning & Framåtsyftande analys:</strong>
+                <strong class="block text-purple-900 mb-1 font-bold">💬 Sammanfattning & Återkoppling:</strong>
                 ${sub.summaryComment || ''}
             </div>
 
@@ -976,7 +1121,7 @@ function openStudentDetailModal(subId) {
     content.innerHTML = `
         <div class="space-y-6">
             <div>
-                <span class="text-xs font-bold text-red-600 uppercase tracking-wider">Elevsvar & Genererad Respons</span>
+                <span class="text-xs font-bold text-red-600 uppercase tracking-wider">Elevsvar & Respons</span>
                 <h2 class="text-2xl font-bold text-slate-900">${sub.studentName}</h2>
                 <p class="text-xs text-slate-500">${exam.title} • Inlämnad klockan: ${sub.submittedAt || ''} • Tid: ${mins} min</p>
             </div>
@@ -994,7 +1139,7 @@ function openStudentDetailModal(subId) {
                                 </span>
                             </div>
                             <div class="p-3 bg-white rounded-lg border border-slate-200 text-xs font-mono text-slate-700 whitespace-pre-wrap">${qR.studentAnswer || 'Inget svar'}</div>
-                            <div class="text-xs text-slate-600 bg-amber-50 p-2.5 rounded-lg border border-amber-200"><strong>AI-Feedback & Framåtblick:</strong> ${qR.hintText}</div>
+                            <div class="text-xs text-slate-600 bg-amber-50 p-2.5 rounded-lg border border-amber-200"><strong>Återkoppling:</strong> ${qR.hintText}</div>
                         </div>
                     `;
                 }).join('')}
@@ -1002,9 +1147,9 @@ function openStudentDetailModal(subId) {
 
             <div class="p-4 rounded-xl bg-purple-50 border border-purple-200 space-y-2">
                 <span class="text-xs font-bold text-purple-800 uppercase flex items-center gap-1.5">
-                    <i class="fa-solid fa-wand-magic-sparkles"></i> Respons som gavs till eleven vid inlämning
+                    💬 Sammanfattande Återkoppling
                 </span>
-                <div class="p-3 bg-white rounded-lg border border-purple-200 text-xs text-slate-800 whitespace-pre-line leading-relaxed font-medium">${sub.summaryComment || 'Ingen feedback.'}</div>
+                <div class="p-3 bg-white rounded-lg border border-purple-200 text-xs text-slate-800 whitespace-pre-line leading-relaxed font-medium">${sub.summaryComment || 'Ingen återkoppling.'}</div>
             </div>
         </div>
     `;
@@ -1148,15 +1293,19 @@ function renderAdminEdit(container) {
                 </div>
 
                 <div class="border-t border-slate-200 pt-5 space-y-4">
-                    <h3 class="font-bold text-slate-900">${isTicket ? 'Begrepp & Förklaringar' : 'Frågor, Modellsvar & Betygskrav'}</h3>
+                    <h3 class="font-bold text-slate-900">${isTicket ? 'Begrepp & Förklaringar' : 'Frågor, Svarsalternativ & Betygskrav'}</h3>
                     <div class="space-y-4">
                         ${(exam.questions || []).map((q, idx) => renderEditQuestionCard(q, idx, (exam.questions || []).length, isTicket)).join('')}
                     </div>
                 </div>
 
-                <div class="flex items-center justify-between pt-4 border-t border-slate-200">
-                    <div class="space-x-2">
-                        <button type="button" onclick="addTextQuestion()" class="px-3 py-2 bg-red-50 text-red-700 font-bold text-xs rounded-xl">${isTicket ? '+ Nytt Begrepp' : '+ Ny fråga'}</button>
+                <div class="flex flex-wrap gap-2 pt-4 border-t border-slate-200 justify-between items-center">
+                    <div class="flex flex-wrap gap-2">
+                        <button type="button" onclick="addTextQuestion()" class="px-3 py-2 bg-red-50 text-red-700 font-bold text-xs rounded-xl">${isTicket ? '+ Nytt Begrepp' : '+ Textfråga'}</button>
+                        ${!isTicket ? `
+                            <button type="button" onclick="addMatchingQuestion()" class="px-3 py-2 bg-purple-50 text-purple-700 font-bold text-xs rounded-xl">+ Para ihop (Koppling)</button>
+                            <button type="button" onclick="addMcqQuestion()" class="px-3 py-2 bg-blue-50 text-blue-700 font-bold text-xs rounded-xl">+ Välj rätt (Flerval)</button>
+                        ` : ''}
                     </div>
                     <button type="submit" class="px-6 py-2.5 bg-emerald-600 text-white font-bold rounded-xl text-xs shadow-md">
                         Spara Uppgift
@@ -1185,6 +1334,68 @@ function toggleCustomKlassInput(val) {
 }
 
 function renderEditQuestionCard(q, idx, totalQuestions, isTicket) {
+    const qType = q.type || 'text';
+
+    if (qType === 'matching') {
+        return `
+            <div class="p-4 rounded-xl border border-purple-200 bg-purple-50/40 space-y-3">
+                <div class="flex items-center justify-between">
+                    <span class="font-bold text-xs text-purple-700 uppercase">Fråga ${idx + 1}: Para ihop (Kopplingar)</span>
+                    <div class="flex items-center space-x-1">
+                        ${idx > 0 ? `<button type="button" onclick="moveQuestion(${idx}, -1)" title="Flytta upp" class="p-1 px-2 bg-slate-200 hover:bg-slate-300 rounded text-xs">▲</button>` : ''}
+                        ${idx < totalQuestions - 1 ? `<button type="button" onclick="moveQuestion(${idx}, 1)" title="Flytta ner" class="p-1 px-2 bg-slate-200 hover:bg-slate-300 rounded text-xs">▼</button>` : ''}
+                        <button type="button" onclick="removeQuestion(${idx})" class="text-red-500 text-xs ml-2"><i class="fa-solid fa-trash"></i></button>
+                    </div>
+                </div>
+                <input type="text" value="${q.text || ''}" onchange="state.editingExam.questions[${idx}].text = this.value" placeholder="Rubrik/Instruktion (t.ex. Koppla samman rätt partiledare med rätt parti)..." class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm font-semibold">
+                
+                <div class="space-y-2 pt-1">
+                    <span class="text-xs font-bold text-slate-500 block">Par (Vänster <-> Höger):</span>
+                    ${(q.pairs || []).map((p, pIdx) => `
+                        <div class="flex items-center gap-2">
+                            <input type="text" value="${p.left || ''}" onchange="state.editingExam.questions[${idx}].pairs[${pIdx}].left = this.value" placeholder="Begrepp (t.ex. Magdalena Andersson)" class="w-1/2 px-3 py-1.5 rounded-lg border border-slate-300 text-xs">
+                            <span class="text-slate-400 font-bold">↔</span>
+                            <input type="text" value="${p.right || ''}" onchange="state.editingExam.questions[${idx}].pairs[${pIdx}].right = this.value" placeholder="Förklaring/Koppling (t.ex. Socialdemokraterna)" class="w-1/2 px-3 py-1.5 rounded-lg border border-slate-300 text-xs">
+                            <button type="button" onclick="removeMatchingPair(${idx},${pIdx})" class="text-red-500 text-xs px-1"><i class="fa-solid fa-xmark"></i></button>
+                        </div>
+                    `).join('')}
+                    <button type="button" onclick="addMatchingPair(${idx})" class="px-2.5 py-1 bg-purple-100 text-purple-700 font-bold text-xs rounded-lg mt-1">+ Lägg till ett par</button>
+                </div>
+            </div>
+        `;
+    }
+
+    if (qType === 'mcq') {
+        return `
+            <div class="p-4 rounded-xl border border-blue-200 bg-blue-50/40 space-y-3">
+                <div class="flex items-center justify-between">
+                    <span class="font-bold text-xs text-blue-700 uppercase">Fråga ${idx + 1}: Välj rätt (Flerval)</span>
+                    <div class="flex items-center space-x-1">
+                        ${idx > 0 ? `<button type="button" onclick="moveQuestion(${idx}, -1)" title="Flytta upp" class="p-1 px-2 bg-slate-200 hover:bg-slate-300 rounded text-xs">▲</button>` : ''}
+                        ${idx < totalQuestions - 1 ? `<button type="button" onclick="moveQuestion(${idx}, 1)" title="Flytta ner" class="p-1 px-2 bg-slate-200 hover:bg-slate-300 rounded text-xs">▼</button>` : ''}
+                        <button type="button" onclick="removeQuestion(${idx})" class="text-red-500 text-xs ml-2"><i class="fa-solid fa-trash"></i></button>
+                    </div>
+                </div>
+                <input type="text" value="${q.text || ''}" onchange="state.editingExam.questions[${idx}].text = this.value" placeholder="Fråga (t.ex. Vilka av följande var orsaker till revolutionen?)..." class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm font-semibold">
+                
+                <div class="space-y-2 pt-1">
+                    <span class="text-xs font-bold text-slate-500 block">Svarsalternativ (Kryssa i de som är RÄTT):</span>
+                    ${(q.options || []).map((opt, oIdx) => {
+                        const isCorrect = (q.correctOptions || []).includes(opt);
+                        return `
+                            <div class="flex items-center gap-2">
+                                <input type="checkbox" ${isCorrect ? 'checked' : ''} onchange="toggleMcqCorrect(${idx},${oIdx}, this.checked)" class="w-4 h-4 text-emerald-600 rounded">
+                                <input type="text" value="${opt}" onchange="updateMcqOptionText(${idx}, ${oIdx}, this.value)" placeholder="Svarsalternativ ${oIdx + 1}..." class="flex-1 px-3 py-1.5 rounded-lg border border-slate-300 text-xs">
+                                <button type="button" onclick="removeMcqOption(${idx},${oIdx})" class="text-red-500 text-xs px-1"><i class="fa-solid fa-xmark"></i></button>
+                            </div>
+                        `;
+                    }).join('')}
+                    <button type="button" onclick="addMcqOption(${idx})" class="px-2.5 py-1 bg-blue-100 text-blue-700 font-bold text-xs rounded-lg mt-1">+ Lägg till alternativ</button>
+                </div>
+            </div>
+        `;
+    }
+
     if (isTicket) {
         return `
             <div class="p-4 rounded-xl border border-slate-200 bg-slate-50 space-y-3">
@@ -1235,6 +1446,90 @@ function addTextQuestion() {
     syncFormToState();
     if (!state.editingExam.questions) state.editingExam.questions = [];
     state.editingExam.questions.push({ id: Date.now(), type: 'text', text: '', explanation: '', criteria: '' });
+    render();
+}
+
+function addMatchingQuestion() {
+    syncFormToState();
+    if (!state.editingExam.questions) state.editingExam.questions = [];
+    state.editingExam.questions.push({
+        id: Date.now(),
+        type: 'matching',
+        text: 'Koppla samman rätt begrepp med rätt förklaring',
+        pairs: [
+            { left: '', right: '' },
+            { left: '', right: '' }
+        ]
+    });
+    render();
+}
+
+function addMatchingPair(qIdx) {
+    syncFormToState();
+    if (!state.editingExam.questions[qIdx].pairs) state.editingExam.questions[qIdx].pairs = [];
+    state.editingExam.questions[qIdx].pairs.push({ left: '', right: '' });
+    render();
+}
+
+function removeMatchingPair(qIdx, pIdx) {
+    syncFormToState();
+    state.editingExam.questions[qIdx].pairs.splice(pIdx, 1);
+    render();
+}
+
+function addMcqQuestion() {
+    syncFormToState();
+    if (!state.editingExam.questions) state.editingExam.questions = [];
+    state.editingExam.questions.push({
+        id: Date.now(),
+        type: 'mcq',
+        text: '',
+        options: ['', ''],
+        correctOptions: []
+    });
+    render();
+}
+
+function addMcqOption(qIdx) {
+    syncFormToState();
+    if (!state.editingExam.questions[qIdx].options) state.editingExam.questions[qIdx].options = [];
+    state.editingExam.questions[qIdx].options.push('');
+    render();
+}
+
+function updateMcqOptionText(qIdx, oIdx, val) {
+    syncFormToState();
+    const oldVal = state.editingExam.questions[qIdx].options[oIdx];
+    state.editingExam.questions[qIdx].options[oIdx] = val;
+    
+    if (!state.editingExam.questions[qIdx].correctOptions) state.editingExam.questions[qIdx].correctOptions = [];
+    const cIdx = state.editingExam.questions[qIdx].correctOptions.indexOf(oldVal);
+    if (cIdx !== -1) {
+        state.editingExam.questions[qIdx].correctOptions[cIdx] = val;
+    }
+}
+
+function toggleMcqCorrect(qIdx, oIdx, isChecked) {
+    syncFormToState();
+    const optVal = state.editingExam.questions[qIdx].options[oIdx];
+    if (!state.editingExam.questions[qIdx].correctOptions) state.editingExam.questions[qIdx].correctOptions = [];
+    
+    if (isChecked) {
+        if (optVal && !state.editingExam.questions[qIdx].correctOptions.includes(optVal)) {
+            state.editingExam.questions[qIdx].correctOptions.push(optVal);
+        }
+    } else {
+        state.editingExam.questions[qIdx].correctOptions = state.editingExam.questions[qIdx].correctOptions.filter(item => item !== optVal);
+    }
+}
+
+function removeMcqOption(qIdx, oIdx) {
+    syncFormToState();
+    const optVal = state.editingExam.questions[qIdx].options[oIdx];
+    state.editingExam.questions[qIdx].options.splice(oIdx, 1);
+    if (state.editingExam.questions[qIdx].correctOptions) {
+        state.editingExam.questions[qIdx].correctOptions = state.editingExam.questions[qIdx].correctOptions.filter(item => item !== optVal);
+    }
     render();
 }
 
