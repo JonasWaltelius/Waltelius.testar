@@ -13,9 +13,10 @@
         body { font-family: 'Inter', sans-serif; }
         .no-select { user-select: none; -webkit-user-select: none; }
         .allow-select { user-select: text; -webkit-user-select: text; }
-        .match-card { cursor: pointer; transition: all 0.2s ease; }
-        .match-card.selected { border-color: #dc2626; background-color: #fef2f2; }
-        .match-card.paired { border-color: #10b981; background-color: #ecfdf5; cursor: default; }
+        .match-card { cursor: pointer; transition: all 0.2s ease; position: relative; z-index: 10; }
+        .match-card.selected { border-color: #dc2626; bg-color: #fef2f2; }
+        .match-card.paired { border-color: #dc2626; background-color: #fef2f2; font-weight: 600; }
+        .svg-canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 5; }
     </style>
 </head>
 <body class="bg-slate-50 text-slate-800 min-h-screen flex flex-col antialiased no-select">
@@ -527,6 +528,7 @@ async function handleCodeSubmit(e) {
         setupCheatDetection();
         startTimer();
         render();
+        setTimeout(drawMatchingLines, 100);
     } else {
         document.getElementById('codeError').classList.remove('hidden');
     }
@@ -562,6 +564,9 @@ function renderStudentExam(container) {
             </form>
         </div>
     `;
+
+    setTimeout(drawMatchingLines, 100);
+    window.addEventListener('resize', drawMatchingLines);
 }
 
 function renderStudentQuestion(q, idx, isTicket) {
@@ -576,13 +581,14 @@ function renderStudentQuestion(q, idx, isTicket) {
         const matchState = state.matchingPairsState[idx];
 
         return `
-            <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+            <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4 relative" id="matching-container-${idx}">
+                <svg class="svg-canvas" id="matching-svg-${idx}"></svg>
                 <div class="text-xs font-bold text-red-600">Uppgift ${idx + 1}: Para ihop</div>
                 <h3 class="text-base font-bold text-slate-900">${q.text || 'Koppla samman rätt begrepp med rätt förklaring'}</h3>
-                <p class="text-xs text-slate-500">Klicka först på ett begrepp till vänster och sedan på rätt förklaring till höger.</p>
+                <p class="text-xs text-slate-500">Klicka på ett begrepp till vänster och sedan på rätt förklaring till höger för att dra en linje.</p>
                 
-                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
-                    <div class="space-y-2">
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-8 pt-2 relative z-10">
+                    <div class="space-y-3">
                         <span class="text-xs font-bold text-slate-400 uppercase tracking-wider block mb-1">Begrepp</span>
                         ${matchState.leftItems.map(l => {
                             const pairedRightId = matchState.connections[l.id];
@@ -591,28 +597,30 @@ function renderStudentQuestion(q, idx, isTicket) {
                             
                             let cardClass = 'bg-slate-50 border-slate-200 text-slate-800';
                             if (isSelected) cardClass = 'bg-red-50 border-red-500 text-red-900 font-bold shadow-sm';
-                            else if (isPaired) cardClass = 'bg-emerald-50 border-emerald-400 text-emerald-900 font-medium';
+                            else if (isPaired) cardClass = 'bg-red-50 border-red-500 text-red-900 font-bold shadow-sm';
 
                             return `
-                                <div onclick="selectLeftCard(${idx},${l.id})" class="match-card p-3 rounded-xl border-2 text-sm flex items-center justify-between ${cardClass}">
-                                    <span>${l.text}</span>${isPaired ? '<i class="fa-solid fa-link text-emerald-600 text-xs"></i>' : '<i class="fa-solid fa-hand-pointer text-slate-300 text-xs"></i>'}
+                                <div id="left-card-${idx}-${l.id}" onclick="selectLeftCard(${idx},${l.id})" class="match-card p-3.5 rounded-xl border-2 text-sm flex items-center justify-between ${cardClass}">
+                                    <span>${l.text}</span>
+                                    <span class="w-3 h-3 rounded-full ${isPaired ? 'bg-red-600' : 'bg-slate-300'}"></span>
                                 </div>
                             `;
                         }).join('')}
                     </div>
 
-                    <div class="space-y-2">
+                    <div class="space-y-3">
                         <span class="text-xs font-bold text-slate-400 uppercase tracking-wider block mb-1">Förklaringar / Kopplingar</span>
                         ${matchState.rightItems.map(r => {
                             const connectedLeftId = Object.keys(matchState.connections).find(k => matchState.connections[k] === r.id);
                             const isPaired = connectedLeftId !== undefined;
                             
                             let cardClass = 'bg-slate-50 border-slate-200 text-slate-800';
-                            if (isPaired) cardClass = 'bg-emerald-50 border-emerald-400 text-emerald-900 font-medium';
+                            if (isPaired) cardClass = 'bg-red-50 border-red-500 text-red-900 font-bold shadow-sm';
 
                             return `
-                                <div onclick="selectRightCard(${idx},${r.id})" class="match-card p-3 rounded-xl border-2 text-sm flex items-center justify-between ${cardClass}">
-                                    <span>${r.text}</span>${isPaired ? '<i class="fa-solid fa-check-circle text-emerald-600 text-xs"></i>' : ''}
+                                <div id="right-card-${idx}-${r.id}" onclick="selectRightCard(${idx},${r.id})" class="match-card p-3.5 rounded-xl border-2 text-sm flex items-center justify-between ${cardClass}">
+                                    <span class="w-3 h-3 rounded-full ${isPaired ? 'bg-red-600' : 'bg-slate-300'}"></span>
+                                    <span>${r.text}</span>
                                 </div>
                             `;
                         }).join('')}
@@ -624,18 +632,21 @@ function renderStudentQuestion(q, idx, isTicket) {
 
     if (qType === 'mcq') {
         const options = q.options || [];
+        const correctCount = (q.correctOptions || []).length || 1;
         const currentSelected = state.answers['q_' + idx] || [];
 
         return `
             <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-3">
                 <div class="text-xs font-bold text-red-600">Fråga ${idx + 1}: Välj rätt alternativ</div>
                 <h3 class="text-base font-bold text-slate-900">${q.text || 'Läs frågan'}</h3>
-                <p class="text-xs text-slate-500">Välj ett eller flera alternativ som stämmer.</p>
+                <p class="text-xs font-bold text-red-600 bg-red-50 p-2 rounded-lg inline-block border border-red-200">
+                    📌 Välj ${correctCount} alternativ ${correctCount > 1 ? 'som är korrekta' : 'som är korrekt'}
+                </p>
                 <div class="space-y-2 pt-2">
                     ${options.map((opt, optIdx) => {
                         const isChecked = Array.isArray(currentSelected) && currentSelected.includes(opt);
                         return `
-                            <label class="flex items-center space-x-3 p-3 rounded-xl border border-slate-200 hover:bg-slate-50 cursor-pointer text-sm">
+                            <label class="flex items-center space-x-3 p-3.5 rounded-xl border border-slate-200 hover:bg-slate-50 cursor-pointer text-sm">
                                 <input type="checkbox" ${isChecked ? 'checked' : ''} onchange="toggleMcqOption(${idx}, '${opt.replace(/'/g, "\\'")}', this.checked)" class="w-4 h-4 text-red-600 rounded focus:ring-red-500 border-slate-300">
                                 <span class="font-medium text-slate-800">${opt}</span>
                             </label>
@@ -658,6 +669,44 @@ function renderStudentQuestion(q, idx, isTicket) {
     `;
 }
 
+function drawMatchingLines() {
+    Object.keys(state.matchingPairsState).forEach(qIdx => {
+        const svg = document.getElementById(`matching-svg-${qIdx}`);
+        const container = document.getElementById(`matching-container-${qIdx}`);
+        if (!svg || !container) return;
+
+        svg.innerHTML = '';
+        const containerRect = container.getBoundingClientRect();
+        const connections = state.matchingPairsState[qIdx].connections || {};
+
+        Object.keys(connections).forEach(lId => {
+            const rId = connections[lId];
+            const leftCard = document.getElementById(`left-card-${qIdx}-${lId}`);
+            const rightCard = document.getElementById(`right-card-${qIdx}-${rId}`);
+
+            if (leftCard && rightCard) {
+                const lRect = leftCard.getBoundingClientRect();
+                const rRect = rightCard.getBoundingClientRect();
+
+                const x1 = lRect.right - containerRect.left;
+                const y1 = lRect.top + lRect.height / 2 - containerRect.top;
+                const x2 = rRect.left - containerRect.left;
+                const y2 = rRect.top + rRect.height / 2 - containerRect.top;
+
+                const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+                line.setAttribute('x1', x1);
+                line.setAttribute('y1', y1);
+                line.setAttribute('x2', x2);
+                line.setAttribute('y2', y2);
+                line.setAttribute('stroke', '#dc2626');
+                line.setAttribute('stroke-width', '3.5');
+                line.setAttribute('stroke-linecap', 'round');
+                svg.appendChild(line);
+            }
+        });
+    });
+}
+
 function selectLeftCard(qIdx, lId) {
     state.selectedLeftCard = { qIdx, lId };
     render();
@@ -669,7 +718,6 @@ function selectRightCard(qIdx, rId) {
         state.matchingPairsState[qIdx].connections[lId] = rId;
         state.selectedLeftCard = null;
 
-        const pairs = state.activeExam.questions[qIdx].pairs || [];
         const formattedAnswers = Object.keys(state.matchingPairsState[qIdx].connections).map(lKey => {
             const leftText = state.matchingPairsState[qIdx].leftItems.find(item => item.id == lKey)?.text;
             const rightText = state.matchingPairsState[qIdx].rightItems.find(item => item.id == state.matchingPairsState[qIdx].connections[lKey])?.text;
@@ -713,21 +761,64 @@ async function evaluateAnswersWithAI(questions, answers, isTicket) {
     } catch (e) {
         const questionResults = questions.map((q, idx) => {
             const rawAns = answers['q_' + idx];
-            const ansStr = Array.isArray(rawAns) ? rawAns.join(', ') : (rawAns || '').trim();
+            const qType = q.type || 'text';
 
-            if (q.type === 'mcq') {
-                const correctOpts = q.correctOptions || [];
-                const isCorrect = Array.isArray(rawAns) && correctOpts.length === rawAns.length && correctOpts.every(val => rawAns.includes(val));
+            if (qType === 'matching') {
+                const pairs = q.pairs || [];
+                let correctPairsCount = 0;
+                const studentPairsStr = typeof rawAns === 'string' ? rawAns : '';
+
+                pairs.forEach(p => {
+                    if (studentPairsStr.includes(`${p.left} -> ${p.right}`)) {
+                        correctPairsCount++;
+                    }
+                });
+
+                const isAllCorrect = correctPairsCount === pairs.length && pairs.length > 0;
                 return {
                     questionIdx: idx + 1,
                     questionText: q.text,
-                    studentAnswer: ansStr || 'Inget valt',
-                    plupp: isCorrect ? 'lightgreen' : 'red',
-                    statusText: isCorrect ? 'Rätt svar' : 'Felaktigt val',
-                    hintText: isCorrect ? 'Rätt valda alternativ!' : `Rätt svar var: ${correctOpts.join(', ')}`
+                    studentAnswer: studentPairsStr || 'Inga kopplingar gjorda',
+                    plupp: isAllCorrect ? 'lightgreen' : 'red',
+                    statusText: isAllCorrect ? 'Alla kopplingar rätt' : `${correctPairsCount} av ${pairs.length} rätta kopplingar`,
+                    hintText: isAllCorrect ? 'Snyggt! Alla begrepp kopplades samman helt korrekt med rätt förklaring.' : 'Några kopplingar stämde inte med facit.'
                 };
             }
 
+            if (qType === 'mcq') {
+                const correctOpts = q.correctOptions || [];
+                const studentSelected = Array.isArray(rawAns) ? rawAns : [];
+
+                let correctSelectedCount = 0;
+                let wrongSelectedCount = 0;
+
+                studentSelected.forEach(opt => {
+                    if (correctOpts.includes(opt)) correctSelectedCount++;
+                    else wrongSelectedCount++;
+                });
+
+                let points = 0;
+                if (correctOpts.length === 2) {
+                    if (correctSelectedCount === 2 && wrongSelectedCount === 0) points = 2;
+                    else if (correctSelectedCount === 1 && wrongSelectedCount === 0) points = 1;
+                    else if (correctSelectedCount === 1 && wrongSelectedCount === 1) points = 1;
+                    else points = 0;
+                } else {
+                    points = (correctSelectedCount === correctOpts.length && wrongSelectedCount === 0) ? 2 : (correctSelectedCount > 0 ? 1 : 0);
+                }
+
+                const plupp = points === 2 ? 'darkgreen' : points === 1 ? 'lightgreen' : 'red';
+                return {
+                    questionIdx: idx + 1,
+                    questionText: q.text,
+                    studentAnswer: studentSelected.join(', ') || 'Inget valt',
+                    plupp: plupp,
+                    statusText: `Poäng: ${points}p (${points === 2 ? 'Full pott' : points === 1 ? 'Delvis rätt' : 'Felaktigt'})`,
+                    hintText: points === 2 ? 'Alla korrekta alternativ valdes!' : `Korrekt facit: ${correctOpts.join(', ')}`
+                };
+            }
+
+            const ansStr = (rawAns || '').trim();
             const plupp = ansStr.length > 80 ? 'darkgreen' : ansStr.length >= 20 ? 'lightgreen' : 'red';
             return {
                 questionIdx: idx + 1,
@@ -741,7 +832,7 @@ async function evaluateAnswersWithAI(questions, answers, isTicket) {
 
         return {
             questionResults,
-            summaryComment: "Inlämningen är registrerad. Läs igenom återkopplingen per fråga ovan."
+            summaryComment: "Inlämningen är registrerad och rättad."
         };
     }
 }
@@ -1350,7 +1441,7 @@ function renderEditQuestionCard(q, idx, totalQuestions, isTicket) {
                 <input type="text" value="${q.text || ''}" onchange="state.editingExam.questions[${idx}].text = this.value" placeholder="Rubrik/Instruktion (t.ex. Koppla samman rätt partiledare med rätt parti)..." class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm font-semibold">
                 
                 <div class="space-y-2 pt-1">
-                    <span class="text-xs font-bold text-slate-500 block">Par (Vänster <-> Höger):</span>
+                    <span class="text-xs font-bold text-slate-500 block">Par (Vänster <-> Höger facit):</span>
                     ${(q.pairs || []).map((p, pIdx) => `
                         <div class="flex items-center gap-2">
                             <input type="text" value="${p.left || ''}" onchange="state.editingExam.questions[${idx}].pairs[${pIdx}].left = this.value" placeholder="Begrepp (t.ex. Magdalena Andersson)" class="w-1/2 px-3 py-1.5 rounded-lg border border-slate-300 text-xs">
