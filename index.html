@@ -14,7 +14,7 @@
         .no-select { user-select: none; -webkit-user-select: none; }
         .allow-select { user-select: text; -webkit-user-select: text; }
         .match-card { cursor: pointer; transition: all 0.2s ease; position: relative; z-index: 10; }
-        .match-card.selected { border-color: #dc2626; bg-color: #fef2f2; }
+        .match-card.selected { border-color: #dc2626; background-color: #fef2f2; }
         .match-card.paired { border-color: #dc2626; background-color: #fef2f2; font-weight: 600; }
         .svg-canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 5; }
     </style>
@@ -196,10 +196,15 @@ async function getExams() {
     if (db) {
         try {
             const { data, error } = await db.from('exams').select('*');
-            if (!error && data && data.length > 0) exams = data;
+            if (!error && data && data.length > 0) {
+                exams = data;
+            }
         } catch (e) {}
     }
-    if (exams.length === 0) exams = localExamsFallback;
+    
+    if (exams.length === 0) {
+        exams = localExamsFallback;
+    }
 
     exams.sort((a, b) => {
         const tA = parseInt((a.id || '').replace('ex-', '')) || 0;
@@ -215,6 +220,7 @@ async function saveExamToDB(exam) {
     if (!exam.submissions) exam.submissions = [];
     if (!exam.activeStudents) exam.activeStudents = [];
     
+    // Spara alltid i lokal backup
     const localIdx = localExamsFallback.findIndex(e => e.id === exam.id);
     if (localIdx !== -1) localExamsFallback[localIdx] = exam;
     else localExamsFallback.unshift(exam);
@@ -225,10 +231,32 @@ async function saveExamToDB(exam) {
     else state.cachedExams.unshift(exam);
 
     if (!db) return true;
+
     try {
-        await db.from('exams').upsert(exam);
+        const payload = {
+            id: exam.id,
+            title: exam.title || '',
+            type: exam.type || 'Test',
+            category: exam.category || 'Historia',
+            klass: exam.klass || '7H',
+            code: exam.code || '1234',
+            active: exam.active === true || exam.active === 'true',
+            archived: exam.archived === true || exam.archived === 'true',
+            questions: exam.questions || [],
+            submissions: exam.submissions || [],
+            activeStudents: exam.activeStudents || []
+        };
+
+        const { data, error } = await db.from('exams').upsert([payload]);
+        if (error) {
+            console.error("Spara i Supabase misslyckades:", error);
+            alert("Varning: Sparades bara lokalt på enheten! Fel från databasen: " + error.message);
+        } else {
+            console.log("Framgångsrikt sparad i Supabase!");
+        }
         return true;
     } catch (e) {
+        console.error("Nätverksfel vid sparning:", e);
         return true;
     }
 }
