@@ -94,23 +94,24 @@
                 <h3 id="projOngoingTitle" class="text-lg font-bold text-amber-400 mb-4 flex items-center gap-2">
                     <i class="fa-solid fa-spinner fa-spin"></i> Pågående (<span id="countOngoing">0</span>)
                 </h3>
-                <div id="listOngoing" class="space-y-2.5 max-h-[55vh] overflow-y-auto pr-2"></div>
+                <div id="listOngoing" class="grid grid-cols-2 gap-2 max-h-[60vh] overflow-y-auto pr-2"></div>
             </div>
 
             <div class="bg-slate-800/60 rounded-2xl p-5 border border-slate-700/60">
                 <h3 class="text-lg font-bold text-emerald-400 mb-4 flex items-center gap-2">
                     <i class="fa-solid fa-circle-check"></i> Inlämnade (<span id="countSubmitted">0</span>)
                 </h3>
-                <div id="listSubmitted" class="space-y-2.5 max-h-[55vh] overflow-y-auto pr-2"></div>
+                <div id="listSubmitted" class="grid grid-cols-2 gap-2 max-h-[60vh] overflow-y-auto pr-2"></div>
             </div>
         </div>
     </div>
 
 <script>
 const SUPABASE_URL = 'https://omjeuavtqdrktxohmebm.supabase.co';
-const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9tamV1YXZ0cWRya3R4b2htZWJtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTEzOTY2MjUsImV4cCI6MjEwNjk3MjYyNX0.oJK8OcJzQnxGX2zG4y6HP1tGL1lPbQnuviKLkC2S1ro';
+const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9tamV1YXZ0cWRya3R4b2htZWJtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDEyNjkwMDAsImV4cCI6MjA1Njg0NTAwMH0.1_R5aR_u8-zN6lX_3-90d-_0';
 const db = window.supabase ? window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY) : null;
 
+const ADMIN_PASS = '6768';
 const BANNED_WORDS = ['fan', 'jävel', 'helvete', 'skit', 'kukk', 'fitta', 'hor', 'bajs', 'snopp', 'fart', 'idiot', 'knulla', 'hitler', 'stalin', 'bitch'];
 let localExamsFallback = JSON.parse(localStorage.getItem('waltelius_local_exams') || '[]');
 
@@ -151,6 +152,21 @@ function exitFullScreen() {
             else if (document.msExitFullscreen) document.msExitFullscreen();
         }
     } catch(e) {}
+}
+
+function handleAdminAuth(targetView = 'admin') {
+    const isAuthed = localStorage.getItem('waltelius_admin_authed') === 'true';
+    if (isAuthed) {
+        switchView(targetView);
+        return;
+    }
+    const input = prompt("Ange lösenord för Testpanelen:");
+    if (input === ADMIN_PASS) {
+        localStorage.setItem('waltelius_admin_authed', 'true');
+        switchView(targetView);
+    } else if (input !== null) {
+        alert("Felaktigt lösenord!");
+    }
 }
 
 function switchView(targetView) {
@@ -220,7 +236,6 @@ async function saveExamToDB(exam) {
     if (!exam.submissions) exam.submissions = [];
     if (!exam.activeStudents) exam.activeStudents = [];
     
-    // Spara alltid i lokal backup
     const localIdx = localExamsFallback.findIndex(e => e.id === exam.id);
     if (localIdx !== -1) localExamsFallback[localIdx] = exam;
     else localExamsFallback.unshift(exam);
@@ -251,8 +266,6 @@ async function saveExamToDB(exam) {
         if (error) {
             console.error("Spara i Supabase misslyckades:", error);
             alert("Varning: Sparades bara lokalt på enheten! Fel från databasen: " + error.message);
-        } else {
-            console.log("Framgångsrikt sparad i Supabase!");
         }
         return true;
     } catch (e) {
@@ -366,7 +379,7 @@ async function render() {
         if (state.view.startsWith('admin')) {
             navRight.innerHTML = `<button onclick="switchView('welcome')" class="text-sm font-semibold text-slate-600 hover:text-red-600">Lämna Testpanelen</button>`;
         } else {
-            navRight.innerHTML = `<button onclick="switchView('admin')" class="text-sm font-semibold text-slate-600 hover:text-red-600">Testpanelen</button>`;
+            navRight.innerHTML = `<button onclick="handleAdminAuth('admin')" class="text-sm font-semibold text-slate-600 hover:text-red-600">Testpanelen</button>`;
         }
     }
 
@@ -628,7 +641,7 @@ function renderStudentQuestion(q, idx, isTicket) {
                             else if (isPaired) cardClass = 'bg-red-50 border-red-500 text-red-900 font-bold shadow-sm';
 
                             return `
-                                <div id="left-card-${idx}-${l.id}" onclick="selectLeftCard(${idx},${l.id})" class="match-card p-3.5 rounded-xl border-2 text-sm flex items-center justify-between ${cardClass}">
+                                <div id="left-card-${idx}-${l.id}" onclick="selectLeftCard(${idx}, ${l.id})" class="match-card p-3.5 rounded-xl border-2 text-sm flex items-center justify-between ${cardClass}">
                                     <span>${l.text}</span>
                                     <span class="w-3 h-3 rounded-full ${isPaired ? 'bg-red-600' : 'bg-slate-300'}"></span>
                                 </div>
@@ -769,7 +782,9 @@ function toggleMcqOption(qIdx, optionText, isChecked) {
     }
 }
 
-async function evaluateAnswersWithAI(questions, answers, isTicket) {
+async function evaluateAnswersWithAI(questions, answers, isTicket, studentName) {
+    const firstName = (studentName || 'Elev').split(' ')[0];
+
     try {
         const response = await fetch(`${SUPABASE_URL}/functions/v1/evaluate-answers`, {
             method: 'POST',
@@ -777,7 +792,7 @@ async function evaluateAnswersWithAI(questions, answers, isTicket) {
                 'Content-Type': 'application/json',
                 'Authorization': `Bearer ${SUPABASE_KEY}`
             },
-            body: JSON.stringify({ questions, answers, isTicket })
+            body: JSON.stringify({ questions, answers, isTicket, studentFirstName: firstName })
         });
 
         if (!response.ok) throw new Error("AIFunktionsfel");
@@ -809,7 +824,7 @@ async function evaluateAnswersWithAI(questions, answers, isTicket) {
                     studentAnswer: studentPairsStr || 'Inga kopplingar gjorda',
                     plupp: isAllCorrect ? 'lightgreen' : 'red',
                     statusText: isAllCorrect ? 'Alla kopplingar rätt' : `${correctPairsCount} av ${pairs.length} rätta kopplingar`,
-                    hintText: isAllCorrect ? 'Snyggt! Alla begrepp kopplades samman helt korrekt med rätt förklaring.' : 'Några kopplingar stämde inte med facit.'
+                    hintText: isAllCorrect ? 'Snyggt kopplat! Alla begrepp stämmer överens med facit.' : 'Några kopplingar stämde inte. Se över facit och ge konkreta exempel nästa gång.'
                 };
             }
 
@@ -854,13 +869,13 @@ async function evaluateAnswersWithAI(questions, answers, isTicket) {
                 studentAnswer: ansStr || 'Inget svar',
                 plupp: plupp,
                 statusText: plupp === 'darkgreen' ? 'Välutvecklat (A-nivå)' : plupp === 'lightgreen' ? 'Godkänt (E/C-nivå)' : 'Ofullständigt / Ej godkänt',
-                hintText: q.criteria ? `Innehåll och betygskrav: ${q.criteria}` : 'Utveckla din motivering och ge konkreta exempel.'
+                hintText: q.criteria ? `Resonemangstips: ${q.criteria}` : 'Utveckla din motivering och ge konkreta exempel, såsom orsaker eller konsekvenser.'
             };
         });
 
         return {
             questionResults,
-            summaryComment: "Inlämningen är registrerad och rättad."
+            summaryComment: `Fint arbetat med uppgiften, ${firstName}! Se över den specifika återkopplingen för respektive fråga ovan för att fördjupa dina resonemang ytterligare.`
         };
     }
 }
@@ -874,7 +889,7 @@ async function handleExamSubmit(e) {
     const submitBtn = document.getElementById('submitBtn');
     if (submitBtn) {
         submitBtn.disabled = true;
-        submitBtn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> <span>Analyserar svar...</span>`;
+        submitBtn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> <span>Genererar återkoppling...</span>`;
     }
 
     const exam = state.activeExam;
@@ -886,7 +901,7 @@ async function handleExamSubmit(e) {
         exam.activeStudents = exam.activeStudents.filter(s => s.name !== state.currentUser.name);
     }
 
-    const aiEvaluation = await evaluateAnswersWithAI(exam.questions || [], state.answers, isTicket);
+    const aiEvaluation = await evaluateAnswersWithAI(exam.questions || [], state.answers, isTicket, state.currentUser.name);
 
     const submission = {
         id: 'sub-' + Date.now(),
@@ -1083,19 +1098,19 @@ async function updateProjectorLists() {
     document.getElementById('countSubmitted').innerText = submitted.length;
 
     const listOngoing = document.getElementById('listOngoing');
-    listOngoing.innerHTML = ongoing.length === 0 ? '<div class="text-xs text-slate-500 py-2">Inga elever för stunden.</div>' :
+    listOngoing.innerHTML = ongoing.length === 0 ? '<div class="col-span-2 text-xs text-slate-500 py-2">Inga elever för stunden.</div>' :
         ongoing.map(s => `
-            <div class="flex items-center justify-between p-3 rounded-xl bg-slate-800 border border-slate-700/80 text-sm">
-                <div class="flex items-center space-x-2">
-                    <span class="font-bold text-slate-200">${s.name}</span>
-                    ${s.warnings === 1 ? '<span class="px-2 py-0.5 bg-amber-500/20 text-amber-400 text-xs font-bold rounded-full border border-amber-500/40"><i class="fa-solid fa-triangle-exclamation"></i> Gult kort</span>' : ''}
-                    ${s.locked ? '<span class="px-2 py-0.5 bg-red-500/20 text-red-400 text-xs font-bold rounded-full border border-red-500/40"><i class="fa-solid fa-lock"></i> Rött kort / Låst</span>' : ''}
+            <div class="flex items-center justify-between p-2.5 rounded-xl bg-slate-800 border border-slate-700/80 text-xs">
+                <div class="flex items-center space-x-1.5 truncate">
+                    <span class="font-bold text-slate-200 truncate">${s.name}</span>
+                    ${s.warnings === 1 ? '<span class="px-1.5 py-0.5 bg-amber-500/20 text-amber-400 text-[10px] font-bold rounded-full border border-amber-500/40">Gult</span>' : ''}
+                    ${s.locked ? '<span class="px-1.5 py-0.5 bg-red-500/20 text-red-400 text-[10px] font-bold rounded-full border border-red-500/40">Låst</span>' : ''}
                 </div>
-                <div class="flex items-center space-x-2">
-                    <span class="text-xs font-mono text-slate-400">${s.joinedAt || ''}</span>
+                <div class="flex items-center space-x-1 ml-1 flex-shrink-0">
+                    <span class="text-[10px] font-mono text-slate-400">${s.joinedAt || ''}</span>
                     ${s.locked ? `
-                        <button onclick="adminResumeStudent('${s.name}')" class="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-lg shadow-sm">
-                            Återuppta
+                        <button onclick="adminResumeStudent('${s.name}')" class="px-2 py-0.5 bg-emerald-600 text-white font-bold text-[10px] rounded">
+                            Lås upp
                         </button>
                     ` : ''}
                 </div>
@@ -1103,11 +1118,11 @@ async function updateProjectorLists() {
         `).join('');
 
     const listSubmitted = document.getElementById('listSubmitted');
-    listSubmitted.innerHTML = submitted.length === 0 ? '<div class="text-xs text-slate-500 py-2">Inga elever har lämnat in ännu.</div>' :
+    listSubmitted.innerHTML = submitted.length === 0 ? '<div class="col-span-2 text-xs text-slate-500 py-2">Inga elever har lämnat in ännu.</div>' :
         submitted.map(s => `
-            <div class="flex items-center justify-between p-3 rounded-xl bg-slate-800 border border-slate-700/80 text-sm">
-                <span class="font-bold text-slate-200">${s.studentName}</span>
-                <span class="text-xs font-mono text-slate-400">${s.submittedAt || ''}</span>
+            <div class="flex items-center justify-between p-2.5 rounded-xl bg-slate-800 border border-slate-700/80 text-xs">
+                <span class="font-bold text-slate-200 truncate">${s.studentName}</span>
+                <span class="text-[10px] font-mono text-slate-400 ml-1 flex-shrink-0">${s.submittedAt || ''}</span>
             </div>
         `).join('');
 }
