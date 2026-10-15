@@ -108,7 +108,7 @@
 
 <script>
 const SUPABASE_URL = 'https://omjeuavtqdrktxohmebm.supabase.co';
-const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9tamV1YXZ0cWRya3R4b2htZWJtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDEyNjkwMDAsImV4cCI6MjA1Njg0NTAwMH0.1_R5aR_u8-zN6lX_3-90d-_0';
+const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9tamV1YXZ0cWRya3R4b2htZWJtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTEzOTY2MjUsImV4cCI6MjEwNjk3MjYyNX0.oJK8OcJzQnxGX2zG4y6HP1tGL1lPbQnuviKLkC2S1ro';
 const db = window.supabase ? window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY) : null;
 
 const ADMIN_PASS = '6768';
@@ -641,7 +641,7 @@ function renderStudentQuestion(q, idx, isTicket) {
                             else if (isPaired) cardClass = 'bg-red-50 border-red-500 text-red-900 font-bold shadow-sm';
 
                             return `
-                                <div id="left-card-${idx}-${l.id}" onclick="selectLeftCard(${idx}, ${l.id})" class="match-card p-3.5 rounded-xl border-2 text-sm flex items-center justify-between ${cardClass}">
+                                <div id="left-card-${idx}-${l.id}" onclick="selectLeftCard(${idx},${l.id})" class="match-card p-3.5 rounded-xl border-2 text-sm flex items-center justify-between ${cardClass}">
                                     <span>${l.text}</span>
                                     <span class="w-3 h-3 rounded-full ${isPaired ? 'bg-red-600' : 'bg-slate-300'}"></span>
                                 </div>
