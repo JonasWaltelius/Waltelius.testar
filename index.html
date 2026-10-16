@@ -265,7 +265,6 @@ async function saveExamToDB(exam) {
         const { data, error } = await db.from('exams').upsert([payload]);
         if (error) {
             console.error("Spara i Supabase misslyckades:", error);
-            alert("Varning: Sparades bara lokalt på enheten! Fel från databasen: " + error.message);
         }
         return true;
     } catch (e) {
@@ -487,7 +486,7 @@ function handleWelcomeSubmit(e) {
 
     const existingActiveStudent = (originalExam.activeStudents || []).find(s => s.name.toLowerCase() === name.toLowerCase());
     if (existingActiveStudent && existingActiveStudent.locked) {
-        alert("Ditt prov är låst eftersom du tidigare stängde eller lämnade sidan. Be din lärare trycka på 'Återuppta' i översikten för att du ska kunna logga in igen.");
+        alert("Ditt prov är låst eftersom du tidigare stängde eller lämnade sidan. Be din lärare trycka på 'Lås upp' i översikten för att du ska kunna logga in igen.");
         return;
     }
 
@@ -554,13 +553,15 @@ async function handleCodeSubmit(e) {
         const existingIdx = state.activeExam.activeStudents.findIndex(s => s.name === state.currentUser.name);
         if (existingIdx !== -1) {
             state.activeExam.activeStudents[existingIdx].locked = false;
+            state.activeExam.activeStudents[existingIdx].status = 'ongoing';
         } else {
             state.activeExam.activeStudents.push({
                 name: state.currentUser.name,
                 class: state.currentUser.class,
                 joinedAt: new Date().toLocaleTimeString('sv-SE', { hour: '2-digit', minute: '2-digit' }),
                 warnings: 0,
-                locked: false
+                locked: false,
+                status: 'ongoing'
             });
         }
         await saveExamToDB(state.activeExam);
@@ -704,8 +705,8 @@ function renderStudentQuestion(q, idx, isTicket) {
             <h3 class="text-base font-bold text-slate-900">${q.text || 'Begrepp/Fråga'}</h3>
             ${isTicket && q.explanation ? `<div class="text-xs bg-slate-100 p-2.5 rounded-lg text-slate-600"><strong>Förklaring/Kontext:</strong> ${q.explanation}</div>` : ''}
             ${!isTicket && q.criteria ? `<div class="text-xs text-amber-800 bg-amber-50 p-2.5 rounded-lg border border-amber-200"><strong>Betygskrav för nivån:</strong> ${q.criteria}</div>` : ''}
-            <textarea required onpaste="return false" oncopy="return false" oncut="return false" onchange="state.answers['q_${idx}'] = this.value" rows="3" 
-                placeholder="${isTicket ? 'Skriv förklaring/resonemang kring begreppet...' : 'Skriv ditt svar här...'}" class="w-full p-3.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-red-500 outline-none text-sm"></textarea>
+            <textarea required onpaste="return false" oncopy="return false" oncut="return false" oninput="state.answers['q_${idx}'] = this.value" rows="3" 
+                placeholder="${isTicket ? 'Skriv förklaring/resonemang kring begreppet...' : 'Skriv ditt svar här...'}" class="w-full p-3.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-red-500 outline-none text-sm">${state.answers['q_' + idx] || ''}</textarea>
         </div>
     `;
 }
@@ -897,11 +898,19 @@ async function handleExamSubmit(e) {
 
     localStorage.setItem(`submitted_device_${exam.id}`, 'true');
 
-    if (exam.activeStudents) {
-        exam.activeStudents = exam.activeStudents.filter(s => s.name !== state.currentUser.name);
+    // Hämta färskt examsobjekt för att undvika överwriting av andras inlämningar
+    const freshExams = await getExams();
+    const freshExam = freshExams.find(ex => ex.id === exam.id) || exam;
+
+    if (freshExam.activeStudents) {
+        const student = freshExam.activeStudents.find(s => s.name === state.currentUser.name);
+        if (student) {
+            student.status = 'submitted';
+            student.submittedAt = new Date().toLocaleTimeString('sv-SE', { hour: '2-digit', minute: '2-digit' });
+        }
     }
 
-    const aiEvaluation = await evaluateAnswersWithAI(exam.questions || [], state.answers, isTicket, state.currentUser.name);
+    const aiEvaluation = await evaluateAnswersWithAI(freshExam.questions || [], state.answers, isTicket, state.currentUser.name);
 
     const submission = {
         id: 'sub-' + Date.now(),
@@ -917,10 +926,11 @@ async function handleExamSubmit(e) {
         answers: state.answers
     };
 
-    if (!exam.submissions) exam.submissions = [];
-    exam.submissions.push(submission);
+    if (!freshExam.submissions) freshExam.submissions = [];
+    freshExam.submissions = freshExam.submissions.filter(s => s.studentName !== state.currentUser.name);
+    freshExam.submissions.push(submission);
 
-    await saveExamToDB(exam);
+    await saveExamToDB(freshExam);
     state.lastSubmittedData = submission;
     switchView('student_result');
 }
@@ -1091,14 +1101,17 @@ async function updateProjectorLists() {
         }
     }
 
-    const ongoing = exam.activeStudents || [];
+    const allActive = exam.activeStudents || [];
     const submitted = exam.submissions || [];
+
+    // Alla aktiva elever som inte ännu lämnat in
+    const ongoing = allActive.filter(s => s.status !== 'submitted');
 
     document.getElementById('countOngoing').innerText = ongoing.length;
     document.getElementById('countSubmitted').innerText = submitted.length;
 
     const listOngoing = document.getElementById('listOngoing');
-    listOngoing.innerHTML = ongoing.length === 0 ? '<div class="col-span-2 text-xs text-slate-500 py-2">Inga elever för stunden.</div>' :
+    listOngoing.innerHTML = ongoing.length === 0 ? '<div class="col-span-2 text-xs text-slate-500 py-2">Inga pågående elever.</div>' :
         ongoing.map(s => `
             <div class="flex items-center justify-between p-2.5 rounded-xl bg-slate-800 border border-slate-700/80 text-xs">
                 <div class="flex items-center space-x-1.5 truncate">
@@ -1154,14 +1167,42 @@ function goToBoard(id) {
 function renderAdminBoard(container, exams) {
     const exam = exams.find(e => e.id === state.selectedExamId);
     if (!exam) return;
+    
+    const activeList = exam.activeStudents || [];
     const subs = exam.submissions || [];
+
+    // Kombinera både inlämnade och pågående elever så att alla ligger kvar
+    const allStudentsMap = {};
+
+    activeList.forEach(s => {
+        allStudentsMap[s.name.toLowerCase()] = {
+            id: 'act-' + s.name,
+            studentName: s.name,
+            studentClass: s.class,
+            status: s.status === 'submitted' ? 'Inlämnat' : (s.locked ? 'Låst' : 'Pågående'),
+            submittedAt: s.submittedAt || s.joinedAt || '-',
+            warnings: s.warnings || 0,
+            questionResults: [],
+            isSubmission: false
+        };
+    });
+
+    subs.forEach(sub => {
+        allStudentsMap[sub.studentName.toLowerCase()] = {
+            ...sub,
+            status: 'Inlämnat',
+            isSubmission: true
+        };
+    });
+
+    const combinedList = Object.values(allStudentsMap);
 
     container.innerHTML = `
         <div class="space-y-6 allow-select">
             <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex items-center justify-between">
                 <div>
                     <h2 class="text-2xl font-bold text-slate-900">${exam.title} - Elevöversikt</h2>
-                    <p class="text-xs text-slate-500 mt-1">Klass ${exam.klass} • ${exam.type} • Totalt ${subs.length} inlämningar</p>
+                    <p class="text-xs text-slate-500 mt-1">Klass ${exam.klass} • ${exam.type} • Totalt ${combinedList.length} elever (${subs.length} inlämnat)</p>
                 </div>
                 <button onclick="switchView('admin')" class="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold rounded-xl text-sm">
                     Tillbaka
@@ -1174,38 +1215,52 @@ function renderAdminBoard(container, exams) {
                         <tr class="bg-slate-50 border-b border-slate-200 text-xs font-bold text-slate-500 uppercase">
                             <th class="p-4">Elev</th>
                             <th class="p-4">Status</th>
-                            <th class="p-4">Inlämnad klockan</th>
+                            <th class="p-4">Tid/Klockslag</th>
                             <th class="p-4 text-center">Pluppar per fråga</th>
                             <th class="p-4 text-right">Åtgärder</th>
                         </tr>
                     </thead>
                     <tbody class="divide-y divide-slate-200 text-sm">
-                        ${subs.length === 0 ? '<tr><td colspan="5" class="p-6 text-center text-slate-400">Inga elever har lämnat in ännu.</td></tr>' : ''}
-                        ${subs.map(s => {
+                        ${combinedList.length === 0 ? '<tr><td colspan="5" class="p-6 text-center text-slate-400">Inga elever har anslutit till uppgiften ännu.</td></tr>' : ''}
+                        ${combinedList.map(s => {
                             const isReviewed = !!s.reviewed;
+                            const isSubmitted = s.status === 'Inlämnat';
 
                             return `
                                 <tr class="hover:bg-slate-50">
-                                    <td class="p-4 font-bold text-slate-900 cursor-pointer text-red-600 hover:underline" onclick="openStudentDetailModal('${s.id}')">
-                                        ${s.studentName} <i class="fa-solid fa-circle-info text-xs ml-1 opacity-60"></i>
+                                    <td class="p-4 font-bold text-slate-900 ${isSubmitted ? 'cursor-pointer text-red-600 hover:underline' : ''}" ${isSubmitted ? `onclick="openStudentDetailModal('${s.id}')"` : ''}>
+                                        ${s.studentName}${isSubmitted ? '<i class="fa-solid fa-circle-info text-xs ml-1 opacity-60"></i>' : ''}
+                                        ${s.warnings === 1 ? '<span class="ml-2 px-2 py-0.5 bg-amber-100 text-amber-800 text-xs font-bold rounded-full">Gult kort</span>' : ''}
                                     </td>
-                                    <td class="p-4"><span class="px-2.5 py-1 text-xs font-semibold rounded-full bg-emerald-100 text-emerald-800">${s.status || 'Inlämnat'}</span></td>
+                                    <td class="p-4">
+                                        <span class="px-2.5 py-1 text-xs font-semibold rounded-full ${isSubmitted ? 'bg-emerald-100 text-emerald-800' : (s.status === 'Låst' ? 'bg-red-100 text-red-800' : 'bg-amber-100 text-amber-800')}">
+                                            ${s.status}
+                                        </span>
+                                    </td>
                                     <td class="p-4 font-mono text-xs text-slate-500">${s.submittedAt || ''}</td>
                                     <td class="p-4 text-center">
-                                        <div class="flex items-center justify-center space-x-1.5">
-                                            ${(s.questionResults || []).map((qR, qIdx) => {
-                                                const pColor = qR.plupp === 'darkgreen' ? 'bg-emerald-700' : qR.plupp === 'red' ? 'bg-red-500' : 'bg-emerald-400';
-                                                return `<span title="Fråga ${qIdx + 1}: ${qR.statusText}" class="w-3.5 h-3.5 rounded-full ${pColor} shadow-sm inline-block"></span>`;
-                                            }).join('')}
-                                        </div>
+                                        ${isSubmitted ? `
+                                            <div class="flex items-center justify-center space-x-1.5">
+                                                ${(s.questionResults || []).map((qR, qIdx) => {
+                                                    const pColor = qR.plupp === 'darkgreen' ? 'bg-emerald-700' : qR.plupp === 'red' ? 'bg-red-500' : 'bg-emerald-400';
+                                                    return `<span title="Fråga ${qIdx + 1}: ${qR.statusText}" class="w-3.5 h-3.5 rounded-full ${pColor} shadow-sm inline-block"></span>`;
+                                                }).join('')}
+                                            </div>
+                                        ` : '<span class="text-xs text-slate-400 font-italic">Pågår...</span>'}
                                     </td>
                                     <td class="p-4 text-right space-x-2">
-                                        <button onclick="toggleStudentReviewed('${s.id}')" class="px-3 py-1.5 font-bold text-xs rounded-lg shadow-sm transition ${isReviewed ? 'bg-emerald-600 text-white' : 'bg-amber-400 hover:bg-amber-500 text-slate-900'}">
-                                            ${isReviewed ? '✅ Granskad' : 'Granska'}
-                                        </button>
-                                        <button onclick="confirmResetSubmission('${s.id}', '${s.studentName}')" class="px-3 py-1.5 bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 font-semibold text-xs rounded-lg transition">
-                                            Ångra inlämningen
-                                        </button>
+                                        ${isSubmitted ? `
+                                            <button onclick="toggleStudentReviewed('${s.id}')" class="px-3 py-1.5 font-bold text-xs rounded-lg shadow-sm transition ${isReviewed ? 'bg-emerald-600 text-white' : 'bg-amber-400 hover:bg-amber-500 text-slate-900'}">
+                                                ${isReviewed ? '✅ Granskad' : 'Granska'}
+                                            </button>
+                                            <button onclick="confirmResetSubmission('${s.id}', '${s.studentName}')" class="px-3 py-1.5 bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 font-semibold text-xs rounded-lg transition">
+                                                Ångra inlämningen
+                                            </button>
+                                        ` : `
+                                            <button onclick="adminResumeStudent('${s.studentName}')" class="px-3 py-1.5 bg-emerald-50 text-emerald-700 border border-emerald-200 font-semibold text-xs rounded-lg">
+                                                Lås upp / Nollställ
+                                            </button>
+                                        `}
                                     </td>
                                 </tr>
                             `;
@@ -1236,9 +1291,13 @@ async function confirmResetSubmission(subId, studentName) {
 
             if (exam.submissions) {
                 exam.submissions = exam.submissions.filter(s => s.id !== subId);
-                await saveExamToDB(exam);
-                render();
             }
+            if (exam.activeStudents) {
+                const act = exam.activeStudents.find(s => s.name === studentName);
+                if (act) act.status = 'ongoing';
+            }
+            await saveExamToDB(exam);
+            render();
         }
     }
 }
@@ -1429,7 +1488,7 @@ function renderAdminEdit(container) {
                 <div class="border-t border-slate-200 pt-5 space-y-4">
                     <h3 class="font-bold text-slate-900">${isTicket ? 'Begrepp & Förklaringar' : 'Frågor, Svarsalternativ & Betygskrav'}</h3>
                     <div class="space-y-4">
-                        ${(exam.questions || []).map((q, idx) => renderEditQuestionCard(q, idx, (exam.questions || []).length, isTicket)).join('')}
+                         ${(exam.questions || []).map((q, idx) => renderEditQuestionCard(q, idx, (exam.questions || []).length, isTicket)).join('')}
                     </div>
                 </div>
 
