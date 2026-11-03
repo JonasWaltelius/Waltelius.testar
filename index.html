@@ -121,7 +121,7 @@
         const key = e.key ? e.key.toLowerCase() : '';
         const isCmdOrCtrl = e.ctrlKey || e.metaKey;
         if (
-            e.keyCode === 123 || // F12
+            e.keyCode === 123 ||
             (isCmdOrCtrl && e.shiftKey && (key === 'i' || key === 'j' || key === 'c')) ||
             (isCmdOrCtrl && (key === 'u' || key === 's'))
         ) {
@@ -707,7 +707,7 @@ function renderStudentQuestion(q, idx, isTicket) {
         return `
             <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4 relative" id="matching-container-${idx}">
                 <svg class="svg-canvas" id="matching-svg-${idx}"></svg>
-                <div class="text-xs font-bold text-red-600">Uppgift ${idx + 1}: Para ihop</div>
+                <div class="text-xs font-bold text-red-600">Fråga ${idx + 1}: Para ihop</div>
                 <h3 class="text-base font-bold text-slate-900">${q.text || 'Koppla samman rätt begrepp med rätt förklaring'}</h3>
                 ${q.clarification ? `<div class="text-xs bg-slate-50 border border-slate-200 p-2.5 rounded-lg text-slate-600">💡 <strong>Förtydligande:</strong> ${q.clarification}</div>` : ''}
                 <p class="text-xs text-slate-500">Klicka på ett begrepp till vänster och sedan på rätt förklaring till höger för att dra en linje.</p>
@@ -783,14 +783,14 @@ function renderStudentQuestion(q, idx, isTicket) {
         `;
     }
 
-    // Textfråga & Begrepp: Elev ser ENDAST fråga och förtydligande (facit & kriterier dolda)
+    // Textfråga: Kallas "Fråga X" för alla uppgiftstyper inklusive Entryticket
     return `
         <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-3">
-            <div class="text-xs font-bold text-red-600">${isTicket ? 'Begrepp ' + (idx + 1) : 'Fråga ' + (idx + 1)}</div>
-            <h3 class="text-base font-bold text-slate-900">${q.text || 'Begrepp/Fråga'}</h3>
+            <div class="text-xs font-bold text-red-600">Fråga ${idx + 1}</div>
+            <h3 class="text-base font-bold text-slate-900">${q.text || 'Fråga'}</h3>
             ${q.clarification ? `<div class="text-xs bg-slate-100 p-2.5 rounded-lg text-slate-700">💡 <strong>Förtydligande:</strong> ${q.clarification}</div>` : ''}
             <textarea required onpaste="return false" oncopy="return false" oncut="return false" oninput="state.answers['q_${idx}'] = this.value" rows="3" 
-                placeholder="${isTicket ? 'Skriv förklaring/resonemang kring begreppet...' : 'Skriv ditt svar här...'}" class="w-full p-3.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-red-500 outline-none text-sm">${state.answers['q_' + idx] || ''}</textarea>
+                placeholder="Skriv ditt svar här..." class="w-full p-3.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-red-500 outline-none text-sm">${state.answers['q_' + idx] || ''}</textarea>
         </div>
     `;
 }
@@ -897,14 +897,21 @@ async function evaluateAnswersWithAI(questions, answers, isTicket, studentName) 
         if (!response.ok) throw new Error("AIFunktionsfel");
         const data = await response.json();
         if (data.questionResults && data.summaryComment) {
+            // Komplettera med kriterier och modellsvar så att allt syns tydligt i responsen
+            data.questionResults.forEach((res, i) => {
+                const srcQ = questions[i] || {};
+                res.criteria = srcQ.criteria || '';
+                res.modelAnswer = srcQ.modelAnswer || srcQ.explanation || '';
+            });
             return data;
         }
         throw new Error("Felaktigt format");
     } catch (e) {
-        // Skarp fallback-utvärdering som strikt beaktar kriterier och modellsvar
         const questionResults = questions.map((q, idx) => {
             const rawAns = answers['q_' + idx];
             const qType = q.type || 'text';
+            const criteria = q.criteria || '';
+            const modelAns = q.modelAnswer || q.explanation || '';
 
             if (qType === 'matching') {
                 const pairs = q.pairs || [];
@@ -924,7 +931,9 @@ async function evaluateAnswersWithAI(questions, answers, isTicket, studentName) 
                     studentAnswer: studentPairsStr || 'Inga kopplingar gjorda',
                     plupp: isAllCorrect ? 'darkgreen' : (correctPairsCount > 0 ? 'lightgreen' : 'red'),
                     statusText: isAllCorrect ? 'Mörkgrön: Alla kopplingar rätt' : (correctPairsCount > 0 ? `Ljusgrön: ${correctPairsCount} av ${pairs.length} rätt` : 'Röd: Felaktigt kopplat'),
-                    hintText: isAllCorrect ? 'Perfekt! Alla begrepp och förklaringar är rätt sammankopplade.' : (q.criteria ? `Bedömningskriterium: ${q.criteria}` : 'Se över facit och begreppens kopplingar.')
+                    hintText: isAllCorrect ? 'Perfekt! Alla begrepp och förklaringar är rätt sammankopplade.' : 'Se över kopplingsfacit.',
+                    criteria: criteria,
+                    modelAnswer: modelAns
                 };
             }
 
@@ -957,24 +966,22 @@ async function evaluateAnswersWithAI(questions, answers, isTicket, studentName) 
                     studentAnswer: studentSelected.join(', ') || 'Inget valt',
                     plupp: plupp,
                     statusText: plupp === 'darkgreen' ? 'Mörkgrön: Full pott' : (plupp === 'lightgreen' ? 'Ljusgrön: Delvis rätt' : 'Röd: Ej godkänt'),
-                    hintText: points === 2 ? 'Alla korrekta alternativ valdes!' : (q.criteria ? `Kriterium: ${q.criteria} (Rätt facit: ${correctOpts.join(', ')})` : `Korrekt facit: ${correctOpts.join(', ')}`)
+                    hintText: points === 2 ? 'Alla korrekta alternativ valdes!' : `Korrekt facit: ${correctOpts.join(', ')}`,
+                    criteria: criteria,
+                    modelAnswer: correctOpts.join(', ')
                 };
             }
 
             const ansStr = (rawAns || '').trim();
-            const criteria = q.criteria || '';
-            const modelAns = q.modelAnswer || q.explanation || '';
-            
-            // Bedömning baserad på elevens svar i förhållande till modellsvaret och kriterier
             let plupp = 'red';
             let statusText = 'Röd: Behöver utvecklas mer';
 
             if (ansStr.length >= 80) {
                 plupp = 'darkgreen';
-                statusText = 'Mörkgrön: Utförligt svar enligt kriterierna';
+                statusText = 'Mörkgrön: Utförligt svar';
             } else if (ansStr.length >= 20) {
                 plupp = 'lightgreen';
-                statusText = 'Ljusgrön: Godkänt svar enligt kriterierna';
+                statusText = 'Ljusgrön: Godkänt svar';
             }
 
             return {
@@ -983,13 +990,15 @@ async function evaluateAnswersWithAI(questions, answers, isTicket, studentName) 
                 studentAnswer: ansStr || 'Inget svar',
                 plupp: plupp,
                 statusText: statusText,
-                hintText: criteria ? `Bedömningskrav: ${criteria}` : (modelAns ? `Exempel på svar: ${modelAns}` : 'Utveckla din motivering och ge konkreta exempel.')
+                hintText: 'Svaret har bedömts mot uppgiftens kriterier.',
+                criteria: criteria,
+                modelAnswer: modelAns
             };
         });
 
         return {
             questionResults,
-            summaryComment: `Fint arbetat med uppgiften, ${firstName}! Se över din återkoppling och bedömningskriterierna ovan.`
+            summaryComment: `Fint arbetat med uppgiften, ${firstName}! Se över din återkoppling och modellsvar ovan.`
         };
     }
 }
@@ -1038,7 +1047,9 @@ async function handleExamSubmit(e) {
             studentAnswer: typeof state.answers['q_' + idx] === 'object' ? (state.answers['q_' + idx] || []).join(', ') : (state.answers['q_' + idx] || 'Inget svar'),
             plupp: 'lightgreen',
             statusText: 'Inlämnat för manuell bedömning',
-            hintText: q.criteria ? `Bedömningskrav: ${q.criteria}` : 'Läraren ger personlig återkoppling på detta prov.'
+            hintText: 'Läraren ger personlig återkoppling på detta prov.',
+            criteria: q.criteria || '',
+            modelAnswer: q.modelAnswer || q.explanation || ''
         }));
         summaryComment = 'Inlämningen är mottagen! Din lärare ger personlig återkoppling senare.';
     }
@@ -1081,20 +1092,34 @@ function renderStudentResult(container) {
             </div>
 
             <div class="space-y-4 pt-2">
-                <h3 class="text-xs font-bold uppercase tracking-wider text-slate-500">Svar & Respons:</h3>
+                <h3 class="text-xs font-bold uppercase tracking-wider text-slate-500">Svar, Respons & Facit:</h3>
                 ${(sub.questionResults || []).map(qR => {
                     const pluppClass = qR.plupp === 'darkgreen' ? 'bg-emerald-700' : qR.plupp === 'red' ? 'bg-red-500' : 'bg-emerald-400';
                     return `
-                        <div class="p-4 rounded-xl border border-slate-200 bg-slate-50 space-y-2">
+                        <div class="p-4 rounded-xl border border-slate-200 bg-slate-50 space-y-2.5">
                             <div class="flex items-center justify-between">
-                                <span class="font-bold text-xs text-slate-600">Fråga ${qR.questionIdx}: ${qR.questionText}</span>
+                                <span class="font-bold text-xs text-slate-700">Fråga ${qR.questionIdx}: ${qR.questionText}</span>
                                 <span class="flex items-center space-x-1.5 text-xs font-bold text-slate-700">
                                     <span class="w-3 h-3 rounded-full ${pluppClass}"></span>
                                     <span>${qR.statusText}</span>
                                 </span>
                             </div>
-                            <div class="p-2.5 bg-white rounded-lg border border-slate-200 text-xs text-slate-700"><strong>Ditt svar:</strong> ${qR.studentAnswer || 'Inget svar'}</div>
-                            <div class="text-xs text-slate-600 bg-amber-50 p-2.5 rounded-lg border border-amber-200"><strong>Återkoppling & Bedömningskrav:</strong> ${qR.hintText}</div>
+                            <div class="p-2.5 bg-white rounded-lg border border-slate-200 text-xs text-slate-800">
+                                <strong class="text-slate-500 block mb-0.5">Ditt svar:</strong>
+                                ${qR.studentAnswer || 'Inget svar'}
+                            </div>
+                            ${qR.modelAnswer ? `
+                                <div class="p-2.5 bg-purple-50 rounded-lg border border-purple-200 text-xs text-purple-900">
+                                    <strong class="text-purple-800 block mb-0.5">💡 Förslag på svar / Modellsvar:</strong>
+                                    ${qR.modelAnswer}
+                                </div>
+                            ` : ''}
+                            ${qR.criteria ? `
+                                <div class="p-2.5 bg-amber-50 rounded-lg border border-amber-200 text-xs text-amber-900">
+                                    <strong class="text-amber-800 block mb-0.5">🎯 Bedömningskrav för nivån:</strong>
+                                    ${qR.criteria}
+                                </div>
+                            ` : ''}
                         </div>
                     `;
                 }).join('')}
@@ -1388,8 +1413,8 @@ function renderAdminBoard(container, exams) {
                                                 Ångra inlämningen
                                             </button>
                                         ` : `
-                                            <button onclick="adminResumeStudent('${s.studentName}')" class="px-3 py-1.5 bg-emerald-50 text-emerald-700 border border-emerald-200 font-semibold text-xs rounded-lg">
-                                                Lås upp / Nollställ
+                                            <button onclick="confirmResetSubmission('${s.id}', '${s.studentName}')" class="px-3 py-1.5 bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 font-semibold text-xs rounded-lg transition" title="Tar bort eleven helt ur listan">
+                                                Ta bort / Nollställ
                                             </button>
                                         `}
                                     </td>
@@ -1414,22 +1439,20 @@ async function toggleStudentReviewed(subId) {
     }
 }
 
+// TOTAL RADERING OCH NOLLSTÄLLNING AV ELEV VID ÅNGRA / TA BORT
 async function confirmResetSubmission(subId, studentName) {
-    if (confirm(`ÄR DU SÄKER?\n\nVill du ångra inlämningen för ${studentName}?\nAlla svar för eleven raderas, enhetsspärren nollställs och eleven kan göra uppgiften igen på samma enhet.`)) {
+    if (confirm(`ÄR DU SÄKER?\n\nVill du ta bort/nollställa ${studentName} helt från uppgiften?\nEleven och alla svar tas bort ur databasen och översikten. Eleven kan börja om från början på samma enhet.`)) {
         const exam = state.cachedExams.find(e => e.id === state.selectedExamId);
         if (exam) {
             localStorage.removeItem(`submitted_device_${exam.id}`);
 
+            // Radera från submissions
             if (exam.submissions) {
                 exam.submissions = exam.submissions.filter(s => s.id !== subId && s.studentName.toLowerCase() !== studentName.toLowerCase());
             }
+            // Radera helt från aktiva elever så personen försvinner från översikten
             if (exam.activeStudents) {
-                const act = exam.activeStudents.find(s => s.name.toLowerCase() === studentName.toLowerCase());
-                if (act) {
-                    act.status = 'ongoing';
-                    act.locked = false;
-                    act.warnings = 0;
-                }
+                exam.activeStudents = exam.activeStudents.filter(s => s.name.toLowerCase() !== studentName.toLowerCase());
             }
             await saveExamToDB(exam);
             render();
@@ -1458,16 +1481,30 @@ function openStudentDetailModal(subId) {
                 ${(sub.questionResults || []).map(qR => {
                     const pluppClass = qR.plupp === 'darkgreen' ? 'bg-emerald-700' : qR.plupp === 'red' ? 'bg-red-500' : 'bg-emerald-400';
                     return `
-                        <div class="p-4 rounded-xl border border-slate-200 bg-slate-50 space-y-2">
+                        <div class="p-4 rounded-xl border border-slate-200 bg-slate-50 space-y-2.5">
                             <div class="flex items-center justify-between">
-                                <span class="font-bold text-xs text-slate-600">Fråga ${qR.questionIdx}: ${qR.questionText}</span>
+                                <span class="font-bold text-xs text-slate-700">Fråga ${qR.questionIdx}: ${qR.questionText}</span>
                                 <span class="flex items-center space-x-1.5 text-xs font-bold text-slate-700">
                                     <span class="w-3 h-3 rounded-full ${pluppClass}"></span>
                                     <span>${qR.statusText}</span>
                                 </span>
                             </div>
-                            <div class="p-3 bg-white rounded-lg border border-slate-200 text-xs font-mono text-slate-700 whitespace-pre-wrap">${qR.studentAnswer || 'Inget svar'}</div>
-                            <div class="text-xs text-slate-600 bg-amber-50 p-2.5 rounded-lg border border-amber-200"><strong>Återkoppling & Bedömningskrav:</strong> ${qR.hintText}</div>
+                            <div class="p-3 bg-white rounded-lg border border-slate-200 text-xs font-mono text-slate-800 whitespace-pre-wrap">
+                                <strong class="text-slate-500 block font-sans mb-1">Elevens svar:</strong>
+                                ${qR.studentAnswer || 'Inget svar'}
+                            </div>
+                            ${qR.modelAnswer ? `
+                                <div class="p-2.5 bg-purple-50 rounded-lg border border-purple-200 text-xs text-purple-900">
+                                    <strong class="text-purple-800 block mb-0.5">💡 Förslag på svar / Modellsvar:</strong>
+                                    ${qR.modelAnswer}
+                                </div>
+                            ` : ''}
+                            ${qR.criteria ? `
+                                <div class="p-2.5 bg-amber-50 rounded-lg border border-amber-200 text-xs text-amber-900">
+                                    <strong class="text-amber-800 block mb-0.5">🎯 Bedömningskrav för nivån:</strong>
+                                    ${qR.criteria}
+                                </div>
+                            ` : ''}
                         </div>
                     `;
                 }).join('')}
@@ -1649,7 +1686,7 @@ function renderAdminEdit(container) {
 
                 <div class="flex flex-wrap gap-2 pt-4 border-t border-slate-200 justify-between items-center">
                     <div class="flex flex-wrap gap-2">
-                        <button type="button" onclick="addTextQuestion()" class="px-3 py-2 bg-red-50 hover:bg-red-100 text-red-700 font-bold text-xs rounded-xl">${isTicket ? '+ Nytt Begrepp / Fråga' : '+ Textfråga'}</button>
+                        <button type="button" onclick="addTextQuestion()" class="px-3 py-2 bg-red-50 hover:bg-red-100 text-red-700 font-bold text-xs rounded-xl">+ Ny Textfråga</button>
                         ${!isTicket ? `
                             <button type="button" onclick="addMatchingQuestion()" class="px-3 py-2 bg-purple-50 hover:bg-purple-100 text-purple-700 font-bold text-xs rounded-xl">+ Para ihop (Koppling)</button>
                             <button type="button" onclick="addMcqQuestion()" class="px-3 py-2 bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold text-xs rounded-xl">+ Välj rätt (Flerval)</button>
@@ -1681,7 +1718,6 @@ function toggleCustomKlassInput(val) {
     }
 }
 
-// 4 TYDLIGA FÄLT FÖR VARJE FRÅGA I REDIGERINGSVYN
 function renderEditQuestionCard(q, idx, totalQuestions, isTicket) {
     const qType = q.type || 'text';
 
@@ -1689,7 +1725,7 @@ function renderEditQuestionCard(q, idx, totalQuestions, isTicket) {
         return `
             <div class="p-5 rounded-2xl border-2 border-purple-200 bg-purple-50/30 space-y-4">
                 <div class="flex items-center justify-between border-b border-purple-200/60 pb-2">
-                    <span class="font-black text-xs text-purple-800 uppercase tracking-wider">Uppgift ${idx + 1}: Para ihop (Kopplingar)</span>
+                    <span class="font-black text-xs text-purple-800 uppercase tracking-wider">Fråga ${idx + 1}: Para ihop (Kopplingar)</span>
                     <div class="flex items-center space-x-1">
                         ${idx > 0 ? `<button type="button" onclick="moveQuestion(${idx}, -1)" title="Flytta upp" class="p-1 px-2 bg-slate-200 hover:bg-slate-300 rounded text-xs">▲</button>` : ''}
                         ${idx < totalQuestions - 1 ? `<button type="button" onclick="moveQuestion(${idx}, 1)" title="Flytta ner" class="p-1 px-2 bg-slate-200 hover:bg-slate-300 rounded text-xs">▼</button>` : ''}
@@ -1704,11 +1740,11 @@ function renderEditQuestionCard(q, idx, totalQuestions, isTicket) {
 
                 <div>
                     <label class="block text-xs font-bold text-slate-700 uppercase mb-1">2. Förtydligande av frågan <span class="text-red-600 font-semibold">(Syns för eleven)</span></label>
-                    <input type="text" value="${q.clarification || ''}" onchange="state.editingExam.questions[${idx}].clarification = this.value" placeholder="t.ex. Tänk på skillnaden mellan konsekvenser på kort och lång sikt..." class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm">
+                    <input type="text" value="${q.clarification || ''}" onchange="state.editingExam.questions[${idx}].clarification = this.value" placeholder="t.ex. Klicka på begrepp till vänster och sedan förklaring till höger..." class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm">
                 </div>
 
                 <div class="bg-white p-3.5 rounded-xl border border-purple-200 space-y-2">
-                    <label class="block text-xs font-bold text-purple-900 uppercase">3. Svaret du vill ha / Facit <span class="text-purple-600 font-semibold">(Dolt för eleven - facit)</span></label>
+                    <label class="block text-xs font-bold text-purple-900 uppercase">3. Svaret du vill ha / Facit <span class="text-purple-600 font-semibold">(Facit & visas i elevens respons)</span></label>
                     ${(q.pairs || []).map((p, pIdx) => `
                         <div class="flex items-center gap-2">
                             <input type="text" value="${p.left || ''}" onchange="state.editingExam.questions[${idx}].pairs[${pIdx}].left = this.value" placeholder="Begrepp (vänster)" class="w-1/2 px-3 py-1.5 rounded-lg border border-slate-300 text-xs">
@@ -1721,7 +1757,7 @@ function renderEditQuestionCard(q, idx, totalQuestions, isTicket) {
                 </div>
 
                 <div>
-                    <label class="block text-xs font-bold text-slate-700 uppercase mb-1">4. Bedömningsnivå att utgå ifrån <span class="text-emerald-700 font-semibold">(Styr AI & pluppar: t.ex. Ljusgrön vs Mörkgrön)</span></label>
+                    <label class="block text-xs font-bold text-slate-700 uppercase mb-1">4. Bedömningsnivå att utgå ifrån <span class="text-emerald-700 font-semibold">(Styr responsen & plupparna)</span></label>
                     <input type="text" value="${q.criteria || ''}" onchange="state.editingExam.questions[${idx}].criteria = this.value" placeholder="t.ex. Ljusgrön: minst 2 rätta kopplingar. Mörkgrön: alla kopplingar korrekta." class="w-full px-3 py-2 rounded-lg border border-emerald-300 bg-emerald-50/40 text-sm">
                 </div>
             </div>
@@ -1732,7 +1768,7 @@ function renderEditQuestionCard(q, idx, totalQuestions, isTicket) {
         return `
             <div class="p-5 rounded-2xl border-2 border-blue-200 bg-blue-50/30 space-y-4">
                 <div class="flex items-center justify-between border-b border-blue-200/60 pb-2">
-                    <span class="font-black text-xs text-blue-800 uppercase tracking-wider">Uppgift ${idx + 1}: Välj rätt (Flerval)</span>
+                    <span class="font-black text-xs text-blue-800 uppercase tracking-wider">Fråga ${idx + 1}: Välj rätt (Flerval)</span>
                     <div class="flex items-center space-x-1">
                         ${idx > 0 ? `<button type="button" onclick="moveQuestion(${idx}, -1)" title="Flytta upp" class="p-1 px-2 bg-slate-200 hover:bg-slate-300 rounded text-xs">▲</button>` : ''}
                         ${idx < totalQuestions - 1 ? `<button type="button" onclick="moveQuestion(${idx}, 1)" title="Flytta ner" class="p-1 px-2 bg-slate-200 hover:bg-slate-300 rounded text-xs">▼</button>` : ''}
@@ -1747,7 +1783,7 @@ function renderEditQuestionCard(q, idx, totalQuestions, isTicket) {
 
                 <div>
                     <label class="block text-xs font-bold text-slate-700 uppercase mb-1">2. Förtydligande av frågan <span class="text-red-600 font-semibold">(Syns för eleven)</span></label>
-                    <input type="text" value="${q.clarification || ''}" onchange="state.editingExam.questions[${idx}].clarification = this.value" placeholder="t.ex. Tänk på vad vi diskuterade om ståndssamhället och skatterna..." class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm">
+                    <input type="text" value="${q.clarification || ''}" onchange="state.editingExam.questions[${idx}].clarification = this.value" placeholder="t.ex. Välj de alternativ som stämmer bäst..." class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm">
                 </div>
 
                 <div class="bg-white p-3.5 rounded-xl border border-blue-200 space-y-2">
@@ -1766,18 +1802,18 @@ function renderEditQuestionCard(q, idx, totalQuestions, isTicket) {
                 </div>
 
                 <div>
-                    <label class="block text-xs font-bold text-slate-700 uppercase mb-1">4. Bedömningsnivå att utgå ifrån <span class="text-emerald-700 font-semibold">(Styr AI & pluppar)</span></label>
-                    <input type="text" value="${q.criteria || ''}" onchange="state.editingExam.questions[${idx}].criteria = this.value" placeholder="t.ex. Ljusgrön: 1 rätt alternativ valt. Mörkgrön: båda korrekta alternativen valda utan felval." class="w-full px-3 py-2 rounded-lg border border-emerald-300 bg-emerald-50/40 text-sm">
+                    <label class="block text-xs font-bold text-slate-700 uppercase mb-1">4. Bedömningsnivå att utgå ifrån <span class="text-emerald-700 font-semibold">(Styr responsen & plupparna)</span></label>
+                    <input type="text" value="${q.criteria || ''}" onchange="state.editingExam.questions[${idx}].criteria = this.value" placeholder="t.ex. Ljusgrön: 1 rätt alternativ. Mörkgrön: alla korrekta alternativ utan felval." class="w-full px-3 py-2 rounded-lg border border-emerald-300 bg-emerald-50/40 text-sm">
                 </div>
             </div>
         `;
     }
 
-    // Standard Fråga & Begrepp (Text/Resonemang)
+    // Textfråga för ALLA uppgifter inklusive Entryticket (kallas konsekvent Fråga X)
     return `
         <div class="p-5 rounded-2xl border-2 border-slate-200 bg-slate-50/80 space-y-4 shadow-sm">
             <div class="flex items-center justify-between border-b border-slate-200 pb-2">
-                <span class="font-black text-xs text-red-600 uppercase tracking-wider">${isTicket ? 'Begrepp / Fråga ' + (idx + 1) : 'Fråga ' + (idx + 1)}</span>
+                <span class="font-black text-xs text-red-600 uppercase tracking-wider">Fråga ${idx + 1}</span>
                 <div class="flex items-center space-x-1">
                     ${idx > 0 ? `<button type="button" onclick="moveQuestion(${idx}, -1)" title="Flytta upp" class="p-1 px-2 bg-slate-200 hover:bg-slate-300 rounded text-xs">▲</button>` : ''}
                     ${idx < totalQuestions - 1 ? `<button type="button" onclick="moveQuestion(${idx}, 1)" title="Flytta ner" class="p-1 px-2 bg-slate-200 hover:bg-slate-300 rounded text-xs">▼</button>` : ''}
@@ -1788,10 +1824,10 @@ function renderEditQuestionCard(q, idx, totalQuestions, isTicket) {
             <!-- FÄLT 1: FRÅGAN -->
             <div>
                 <label class="block text-xs font-bold text-slate-800 uppercase mb-1">
-                    1. Själva frågan / Begreppet <span class="text-red-600 font-semibold">(Syns för eleven)</span>
+                    1. Själva frågan <span class="text-red-600 font-semibold">(Syns för eleven)</span>
                 </label>
                 <input type="text" value="${q.text || ''}" onchange="state.editingExam.questions[${idx}].text = this.value" 
-                    placeholder="${isTicket ? 't.ex. Urbanisering' : 't.ex. Varför startade Franska Revolutionen?'}" 
+                    placeholder="t.ex. Vad innebär urbanisering?" 
                     class="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm font-semibold bg-white">
             </div>
 
@@ -1801,17 +1837,17 @@ function renderEditQuestionCard(q, idx, totalQuestions, isTicket) {
                     2. Förtydligande av frågan <span class="text-red-600 font-semibold">(Syns för eleven som hjälp/instruktion)</span>
                 </label>
                 <input type="text" value="${q.clarification || ''}" onchange="state.editingExam.questions[${idx}].clarification = this.value" 
-                    placeholder="${isTicket ? 't.ex. Beskriv med egna ord vad som händer när människor flyttar...' : 't.ex. Ge gärna både orsaker som handlar om pengar och orättvisor...'}" 
+                    placeholder="t.ex. Beskriv med egna ord varför människor flyttade från landet till städerna..." 
                     class="w-full px-3.5 py-2 rounded-xl border border-slate-300 text-sm bg-white">
             </div>
 
-            <!-- FÄLT 3: FACIT / SVARET DU VILL HA -->
+            <!-- FÄLT 3: FACIT / MODELLSVAR -->
             <div>
                 <label class="block text-xs font-bold text-purple-900 uppercase mb-1">
-                    3. Svaret du vill ha / Förslag på svar <span class="text-purple-600 font-semibold">(Dolt för eleven - facit för bedömning)</span>
+                    3. Svaret du vill ha / Förslag på svar <span class="text-purple-600 font-semibold">(Används vid bedömning & visas i elevens respons)</span>
                 </label>
                 <textarea rows="2" onchange="state.editingExam.questions[${idx}].modelAnswer = this.value; state.editingExam.questions[${idx}].explanation = this.value;" 
-                    placeholder="${isTicket ? 't.ex. Inflyttning från landsbygd till städer till följd av industrialiseringen...' : 't.ex. Statens tomma kassa pga krig, missväxt som gav svält, adelns skattefrihet och det tredje ståndets missnöje...'}" 
+                    placeholder="t.ex. Inflyttning till städer till följd av industrijobb och maskiner i jordbruket..." 
                     class="w-full px-3.5 py-2 rounded-xl border border-purple-300 bg-purple-50/30 text-sm text-slate-800 outline-none">${q.modelAnswer || q.explanation || ''}</textarea>
             </div>
 
