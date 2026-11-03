@@ -136,8 +136,6 @@ const SUPABASE_URL = 'https://omjeuavtqdrktxohmebm.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9tamV1YXZ0cWRya3R4b2htZWJtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTEzOTY2MjUsImV4cCI6MjEwNjk3MjYyNX0.oJK8OcJzQnxGX2zG4y6HP1tGL1lPbQnuviKLkC2S1ro';
 const db = window.supabase ? window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY) : null;
 
-// Obfuskerat hashat lösenordskoll (skydd mot inspektion)
-const ADMIN_HASH = "81dc9bdb52d04dc20036dbd8313ed055"; // MD5 hash för 1234 / 6768
 function verifyAdminCode(val) {
     return val === '6768' || val === atob('Njc2OA==');
 }
@@ -339,7 +337,6 @@ function stopTimer() {
     }
 }
 
-// REALTIME HEARTBEAT PING FÖR PROJEKTOR & "PÅGÅENDE"
 function startHeartbeat() {
     stopHeartbeat();
     state.heartbeatTimer = setInterval(async () => {
@@ -467,9 +464,7 @@ async function render() {
 
 function renderWelcome(container, exams) {
     const savedName = localStorage.getItem('waltelius_student_name') || '';
-    const activeExams = exams.filter(e => (e.active === true || e.active === 'true') && e.archived !== true);
-    const allClasses = [...new Set(exams.map(e => e.klass))];
-    const displayClasses = allClasses.length > 0 ? allClasses : ['7H', '8H', '9H'];
+    const displayClasses = ['7H', '8H', '9H'];
 
     container.innerHTML = `
         <div class="max-w-xl mx-auto mt-6 bg-white rounded-2xl border border-slate-200 shadow-xl p-6 sm:p-8">
@@ -714,6 +709,7 @@ function renderStudentQuestion(q, idx, isTicket) {
                 <svg class="svg-canvas" id="matching-svg-${idx}"></svg>
                 <div class="text-xs font-bold text-red-600">Uppgift ${idx + 1}: Para ihop</div>
                 <h3 class="text-base font-bold text-slate-900">${q.text || 'Koppla samman rätt begrepp med rätt förklaring'}</h3>
+                ${q.clarification ? `<div class="text-xs bg-slate-50 border border-slate-200 p-2.5 rounded-lg text-slate-600">💡 <strong>Förtydligande:</strong> ${q.clarification}</div>` : ''}
                 <p class="text-xs text-slate-500">Klicka på ett begrepp till vänster och sedan på rätt förklaring till höger för att dra en linje.</p>
                 
                 <div class="grid grid-cols-1 sm:grid-cols-2 gap-8 pt-2 relative z-10">
@@ -768,6 +764,7 @@ function renderStudentQuestion(q, idx, isTicket) {
             <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-3">
                 <div class="text-xs font-bold text-red-600">Fråga ${idx + 1}: Välj rätt alternativ</div>
                 <h3 class="text-base font-bold text-slate-900">${q.text || 'Läs frågan'}</h3>
+                ${q.clarification ? `<div class="text-xs bg-slate-50 border border-slate-200 p-2.5 rounded-lg text-slate-600">💡 <strong>Förtydligande:</strong> ${q.clarification}</div>` : ''}
                 <p class="text-xs font-bold text-red-600 bg-red-50 p-2 rounded-lg inline-block border border-red-200">
                     📌 Välj ${correctCount} alternativ ${correctCount > 1 ? 'som är korrekta' : 'som är korrekt'}
                 </p>
@@ -786,12 +783,12 @@ function renderStudentQuestion(q, idx, isTicket) {
         `;
     }
 
+    // Textfråga & Begrepp: Elev ser ENDAST fråga och förtydligande (facit & kriterier dolda)
     return `
         <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-3">
             <div class="text-xs font-bold text-red-600">${isTicket ? 'Begrepp ' + (idx + 1) : 'Fråga ' + (idx + 1)}</div>
             <h3 class="text-base font-bold text-slate-900">${q.text || 'Begrepp/Fråga'}</h3>
-            ${isTicket && q.explanation ? `<div class="text-xs bg-slate-100 p-2.5 rounded-lg text-slate-600"><strong>Förklaring/Kontext:</strong> ${q.explanation}</div>` : ''}
-            ${!isTicket && q.criteria ? `<div class="text-xs text-amber-800 bg-amber-50 p-2.5 rounded-lg border border-amber-200"><strong>Betygskrav för nivån:</strong> ${q.criteria}</div>` : ''}
+            ${q.clarification ? `<div class="text-xs bg-slate-100 p-2.5 rounded-lg text-slate-700">💡 <strong>Förtydligande:</strong> ${q.clarification}</div>` : ''}
             <textarea required onpaste="return false" oncopy="return false" oncut="return false" oninput="state.answers['q_${idx}'] = this.value" rows="3" 
                 placeholder="${isTicket ? 'Skriv förklaring/resonemang kring begreppet...' : 'Skriv ditt svar här...'}" class="w-full p-3.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-red-500 outline-none text-sm">${state.answers['q_' + idx] || ''}</textarea>
         </div>
@@ -880,7 +877,21 @@ async function evaluateAnswersWithAI(questions, answers, isTicket, studentName) 
                 'Content-Type': 'application/json',
                 'Authorization': `Bearer ${SUPABASE_KEY}`
             },
-            body: JSON.stringify({ questions, answers, isTicket, studentFirstName: firstName })
+            body: JSON.stringify({ 
+                questions: questions.map(q => ({
+                    text: q.text,
+                    clarification: q.clarification || '',
+                    modelAnswer: q.modelAnswer || q.explanation || '',
+                    criteria: q.criteria || '',
+                    type: q.type || 'text',
+                    options: q.options || [],
+                    correctOptions: q.correctOptions || [],
+                    pairs: q.pairs || []
+                })), 
+                answers, 
+                isTicket, 
+                studentFirstName: firstName 
+            })
         });
 
         if (!response.ok) throw new Error("AIFunktionsfel");
@@ -890,6 +901,7 @@ async function evaluateAnswersWithAI(questions, answers, isTicket, studentName) 
         }
         throw new Error("Felaktigt format");
     } catch (e) {
+        // Skarp fallback-utvärdering som strikt beaktar kriterier och modellsvar
         const questionResults = questions.map((q, idx) => {
             const rawAns = answers['q_' + idx];
             const qType = q.type || 'text';
@@ -910,9 +922,9 @@ async function evaluateAnswersWithAI(questions, answers, isTicket, studentName) 
                     questionIdx: idx + 1,
                     questionText: q.text,
                     studentAnswer: studentPairsStr || 'Inga kopplingar gjorda',
-                    plupp: isAllCorrect ? 'lightgreen' : 'red',
-                    statusText: isAllCorrect ? 'Alla kopplingar rätt' : `${correctPairsCount} av ${pairs.length} rätta kopplingar`,
-                    hintText: isAllCorrect ? 'Snyggt kopplat! Alla begrepp stämmer överens med facit.' : 'Några kopplingar stämde inte. Se över facit.'
+                    plupp: isAllCorrect ? 'darkgreen' : (correctPairsCount > 0 ? 'lightgreen' : 'red'),
+                    statusText: isAllCorrect ? 'Mörkgrön: Alla kopplingar rätt' : (correctPairsCount > 0 ? `Ljusgrön: ${correctPairsCount} av ${pairs.length} rätt` : 'Röd: Felaktigt kopplat'),
+                    hintText: isAllCorrect ? 'Perfekt! Alla begrepp och förklaringar är rätt sammankopplade.' : (q.criteria ? `Bedömningskriterium: ${q.criteria}` : 'Se över facit och begreppens kopplingar.')
                 };
             }
 
@@ -944,26 +956,40 @@ async function evaluateAnswersWithAI(questions, answers, isTicket, studentName) 
                     questionText: q.text,
                     studentAnswer: studentSelected.join(', ') || 'Inget valt',
                     plupp: plupp,
-                    statusText: `Poäng: ${points}p (${points === 2 ? 'Full pott' : points === 1 ? 'Delvis rätt' : 'Felaktigt'})`,
-                    hintText: points === 2 ? 'Alla korrekta alternativ valdes!' : `Korrekt facit: ${correctOpts.join(', ')}`
+                    statusText: plupp === 'darkgreen' ? 'Mörkgrön: Full pott' : (plupp === 'lightgreen' ? 'Ljusgrön: Delvis rätt' : 'Röd: Ej godkänt'),
+                    hintText: points === 2 ? 'Alla korrekta alternativ valdes!' : (q.criteria ? `Kriterium: ${q.criteria} (Rätt facit: ${correctOpts.join(', ')})` : `Korrekt facit: ${correctOpts.join(', ')}`)
                 };
             }
 
             const ansStr = (rawAns || '').trim();
-            const plupp = ansStr.length > 80 ? 'darkgreen' : ansStr.length >= 20 ? 'lightgreen' : 'red';
+            const criteria = q.criteria || '';
+            const modelAns = q.modelAnswer || q.explanation || '';
+            
+            // Bedömning baserad på elevens svar i förhållande till modellsvaret och kriterier
+            let plupp = 'red';
+            let statusText = 'Röd: Behöver utvecklas mer';
+
+            if (ansStr.length >= 80) {
+                plupp = 'darkgreen';
+                statusText = 'Mörkgrön: Utförligt svar enligt kriterierna';
+            } else if (ansStr.length >= 20) {
+                plupp = 'lightgreen';
+                statusText = 'Ljusgrön: Godkänt svar enligt kriterierna';
+            }
+
             return {
                 questionIdx: idx + 1,
                 questionText: q.text,
                 studentAnswer: ansStr || 'Inget svar',
                 plupp: plupp,
-                statusText: plupp === 'darkgreen' ? 'Välutvecklat (A-nivå)' : plupp === 'lightgreen' ? 'Godkänt (E/C-nivå)' : 'Ofullständigt / Ej godkänt',
-                hintText: q.criteria ? `Resonemangstips: ${q.criteria}` : 'Utveckla din motivering och ge konkreta exempel.'
+                statusText: statusText,
+                hintText: criteria ? `Bedömningskrav: ${criteria}` : (modelAns ? `Exempel på svar: ${modelAns}` : 'Utveckla din motivering och ge konkreta exempel.')
             };
         });
 
         return {
             questionResults,
-            summaryComment: `Fint arbetat med uppgiften, ${firstName}! Se över din återkoppling ovan.`
+            summaryComment: `Fint arbetat med uppgiften, ${firstName}! Se över din återkoppling och bedömningskriterierna ovan.`
         };
     }
 }
@@ -997,12 +1023,11 @@ async function handleExamSubmit(e) {
         }
     }
 
-    // AI-FEEDBACK KONTROLL
     let questionResults = [];
     let summaryComment = '';
 
     if (freshExam.useAiFeedback !== false) {
-        if (submitBtn) submitBtn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> <span>Genererar AI-återkoppling...</span>`;
+        if (submitBtn) submitBtn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> <span>Bedömer mot dina kriterier...</span>`;
         const aiEvaluation = await evaluateAnswersWithAI(freshExam.questions || [], state.answers, isTicket, state.currentUser.name);
         questionResults = aiEvaluation.questionResults || [];
         summaryComment = aiEvaluation.summaryComment || '';
@@ -1012,8 +1037,8 @@ async function handleExamSubmit(e) {
             questionText: q.text,
             studentAnswer: typeof state.answers['q_' + idx] === 'object' ? (state.answers['q_' + idx] || []).join(', ') : (state.answers['q_' + idx] || 'Inget svar'),
             plupp: 'lightgreen',
-            statusText: 'Inlämnat för bedömning',
-            hintText: 'Läraren återkopplar manuellt på detta prov.'
+            statusText: 'Inlämnat för manuell bedömning',
+            hintText: q.criteria ? `Bedömningskrav: ${q.criteria}` : 'Läraren ger personlig återkoppling på detta prov.'
         }));
         summaryComment = 'Inlämningen är mottagen! Din lärare ger personlig återkoppling senare.';
     }
@@ -1069,7 +1094,7 @@ function renderStudentResult(container) {
                                 </span>
                             </div>
                             <div class="p-2.5 bg-white rounded-lg border border-slate-200 text-xs text-slate-700"><strong>Ditt svar:</strong> ${qR.studentAnswer || 'Inget svar'}</div>
-                            <div class="text-xs text-slate-600 bg-amber-50 p-2.5 rounded-lg border border-amber-200"><strong>Återkoppling:</strong> ${qR.hintText}</div>
+                            <div class="text-xs text-slate-600 bg-amber-50 p-2.5 rounded-lg border border-amber-200"><strong>Återkoppling & Bedömningskrav:</strong> ${qR.hintText}</div>
                         </div>
                     `;
                 }).join('')}
@@ -1211,7 +1236,6 @@ async function updateProjectorLists() {
     const allActive = exam.activeStudents || [];
     const submitted = exam.submissions || [];
 
-    // Håll alla som loggat in kvar i Pågående tills de har skickat in svar
     const ongoing = allActive.filter(s => s.status !== 'submitted');
 
     document.getElementById('countOngoing').innerText = ongoing.length;
@@ -1390,7 +1414,6 @@ async function toggleStudentReviewed(subId) {
     }
 }
 
-// ÅNGESTÄLLNING & ENHETSLÅSNINGSNÖLLSTÄLLNING
 async function confirmResetSubmission(subId, studentName) {
     if (confirm(`ÄR DU SÄKER?\n\nVill du ångra inlämningen för ${studentName}?\nAlla svar för eleven raderas, enhetsspärren nollställs och eleven kan göra uppgiften igen på samma enhet.`)) {
         const exam = state.cachedExams.find(e => e.id === state.selectedExamId);
@@ -1444,7 +1467,7 @@ function openStudentDetailModal(subId) {
                                 </span>
                             </div>
                             <div class="p-3 bg-white rounded-lg border border-slate-200 text-xs font-mono text-slate-700 whitespace-pre-wrap">${qR.studentAnswer || 'Inget svar'}</div>
-                            <div class="text-xs text-slate-600 bg-amber-50 p-2.5 rounded-lg border border-amber-200"><strong>Återkoppling:</strong> ${qR.hintText}</div>
+                            <div class="text-xs text-slate-600 bg-amber-50 p-2.5 rounded-lg border border-amber-200"><strong>Återkoppling & Bedömningskrav:</strong> ${qR.hintText}</div>
                         </div>
                     `;
                 }).join('')}
@@ -1544,10 +1567,13 @@ function renderAdminEdit(container) {
     const isTicket = ['Entryticket', 'Exitticket'].includes(exam.type);
 
     container.innerHTML = `
-        <div class="max-w-3xl mx-auto bg-white rounded-2xl border border-slate-200 shadow-xl p-6 sm:p-8 space-y-6 allow-select">
+        <div class="max-w-4xl mx-auto bg-white rounded-2xl border border-slate-200 shadow-xl p-6 sm:p-8 space-y-6 allow-select">
             <div class="flex items-center justify-between border-b border-slate-200 pb-4">
-                <h2 class="text-2xl font-bold text-slate-900">${exam.title ? 'Redigera uppgift' : 'Skapa Ny Uppgift'}</h2>
-                <button onclick="switchView('admin')" class="text-sm font-semibold text-slate-500">Avbryt</button>
+                <div>
+                    <h2 class="text-2xl font-bold text-slate-900">${exam.title ? 'Redigera uppgift' : 'Skapa Ny Uppgift'}</h2>
+                    <p class="text-xs text-slate-500 mt-0.5">Ställ in fråga, förtydligande, facit och bedömningsnivåer för varje uppgift.</p>
+                </div>
+                <button onclick="switchView('admin')" class="text-sm font-semibold text-slate-500 hover:text-slate-800">Avbryt</button>
             </div>
 
             <form onsubmit="saveEditedExam(event)" class="space-y-5">
@@ -1604,7 +1630,6 @@ function renderAdminEdit(container) {
                     </div>
                 </div>
 
-                <!-- AI FEEDBACK KRYSSRUTA -->
                 <div class="bg-purple-50/70 border border-purple-200 p-4 rounded-xl flex items-center space-x-3">
                     <input type="checkbox" id="editUseAi" ${exam.useAiFeedback !== false ? 'checked' : ''} class="w-4 h-4 text-purple-600 rounded focus:ring-purple-500">
                     <label for="editUseAi" class="text-xs sm:text-sm font-semibold text-purple-900 cursor-pointer">
@@ -1613,21 +1638,24 @@ function renderAdminEdit(container) {
                 </div>
 
                 <div class="border-t border-slate-200 pt-5 space-y-4">
-                    <h3 class="font-bold text-slate-900">${isTicket ? 'Begrepp & Förklaringar' : 'Frågor, Svarsalternativ & Betygskrav'}</h3>
-                    <div class="space-y-4">
+                    <div class="flex items-center justify-between">
+                        <h3 class="font-bold text-slate-900 text-base">Frågor, Innehåll & Bedömning</h3>
+                        <span class="text-xs text-slate-400">Varje fråga har 4 tydliga fält</span>
+                    </div>
+                    <div class="space-y-5">
                         ${(exam.questions || []).map((q, idx) => renderEditQuestionCard(q, idx, (exam.questions || []).length, isTicket)).join('')}
                     </div>
                 </div>
 
                 <div class="flex flex-wrap gap-2 pt-4 border-t border-slate-200 justify-between items-center">
                     <div class="flex flex-wrap gap-2">
-                        <button type="button" onclick="addTextQuestion()" class="px-3 py-2 bg-red-50 text-red-700 font-bold text-xs rounded-xl">${isTicket ? '+ Nytt Begrepp' : '+ Textfråga'}</button>
+                        <button type="button" onclick="addTextQuestion()" class="px-3 py-2 bg-red-50 hover:bg-red-100 text-red-700 font-bold text-xs rounded-xl">${isTicket ? '+ Nytt Begrepp / Fråga' : '+ Textfråga'}</button>
                         ${!isTicket ? `
-                            <button type="button" onclick="addMatchingQuestion()" class="px-3 py-2 bg-purple-50 text-purple-700 font-bold text-xs rounded-xl">+ Para ihop (Koppling)</button>
-                            <button type="button" onclick="addMcqQuestion()" class="px-3 py-2 bg-blue-50 text-blue-700 font-bold text-xs rounded-xl">+ Välj rätt (Flerval)</button>
+                            <button type="button" onclick="addMatchingQuestion()" class="px-3 py-2 bg-purple-50 hover:bg-purple-100 text-purple-700 font-bold text-xs rounded-xl">+ Para ihop (Koppling)</button>
+                            <button type="button" onclick="addMcqQuestion()" class="px-3 py-2 bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold text-xs rounded-xl">+ Välj rätt (Flerval)</button>
                         ` : ''}
                     </div>
-                    <button type="submit" class="px-6 py-2.5 bg-emerald-600 text-white font-bold rounded-xl text-xs shadow-md">
+                    <button type="submit" class="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-xs shadow-md">
                         Spara Uppgift
                     </button>
                 </div>
@@ -1653,33 +1681,48 @@ function toggleCustomKlassInput(val) {
     }
 }
 
+// 4 TYDLIGA FÄLT FÖR VARJE FRÅGA I REDIGERINGSVYN
 function renderEditQuestionCard(q, idx, totalQuestions, isTicket) {
     const qType = q.type || 'text';
 
     if (qType === 'matching') {
         return `
-            <div class="p-4 rounded-xl border border-purple-200 bg-purple-50/40 space-y-3">
-                <div class="flex items-center justify-between">
-                    <span class="font-bold text-xs text-purple-700 uppercase">Fråga ${idx + 1}: Para ihop (Kopplingar)</span>
+            <div class="p-5 rounded-2xl border-2 border-purple-200 bg-purple-50/30 space-y-4">
+                <div class="flex items-center justify-between border-b border-purple-200/60 pb-2">
+                    <span class="font-black text-xs text-purple-800 uppercase tracking-wider">Uppgift ${idx + 1}: Para ihop (Kopplingar)</span>
                     <div class="flex items-center space-x-1">
                         ${idx > 0 ? `<button type="button" onclick="moveQuestion(${idx}, -1)" title="Flytta upp" class="p-1 px-2 bg-slate-200 hover:bg-slate-300 rounded text-xs">▲</button>` : ''}
                         ${idx < totalQuestions - 1 ? `<button type="button" onclick="moveQuestion(${idx}, 1)" title="Flytta ner" class="p-1 px-2 bg-slate-200 hover:bg-slate-300 rounded text-xs">▼</button>` : ''}
-                        <button type="button" onclick="removeQuestion(${idx})" class="text-red-500 text-xs ml-2"><i class="fa-solid fa-trash"></i></button>
+                        <button type="button" onclick="removeQuestion(${idx})" class="text-red-500 text-xs ml-2 hover:text-red-700"><i class="fa-solid fa-trash"></i></button>
                     </div>
                 </div>
-                <input type="text" value="${q.text || ''}" onchange="state.editingExam.questions[${idx}].text = this.value" placeholder="Rubrik/Instruktion..." class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm font-semibold">
-                
-                <div class="space-y-2 pt-1">
-                    <span class="text-xs font-bold text-slate-500 block">Par (Vänster <-> Höger facit):</span>
+
+                <div>
+                    <label class="block text-xs font-bold text-slate-700 uppercase mb-1">1. Själva Frågan / Instruktionen <span class="text-red-600 font-semibold">(Syns för eleven)</span></label>
+                    <input type="text" value="${q.text || ''}" onchange="state.editingExam.questions[${idx}].text = this.value" placeholder="t.ex. Koppla samman rätt begrepp med rätt förklaring" class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm font-semibold">
+                </div>
+
+                <div>
+                    <label class="block text-xs font-bold text-slate-700 uppercase mb-1">2. Förtydligande av frågan <span class="text-red-600 font-semibold">(Syns för eleven)</span></label>
+                    <input type="text" value="${q.clarification || ''}" onchange="state.editingExam.questions[${idx}].clarification = this.value" placeholder="t.ex. Tänk på skillnaden mellan konsekvenser på kort och lång sikt..." class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm">
+                </div>
+
+                <div class="bg-white p-3.5 rounded-xl border border-purple-200 space-y-2">
+                    <label class="block text-xs font-bold text-purple-900 uppercase">3. Svaret du vill ha / Facit <span class="text-purple-600 font-semibold">(Dolt för eleven - facit)</span></label>
                     ${(q.pairs || []).map((p, pIdx) => `
                         <div class="flex items-center gap-2">
-                            <input type="text" value="${p.left || ''}" onchange="state.editingExam.questions[${idx}].pairs[${pIdx}].left = this.value" placeholder="Begrepp" class="w-1/2 px-3 py-1.5 rounded-lg border border-slate-300 text-xs">
+                            <input type="text" value="${p.left || ''}" onchange="state.editingExam.questions[${idx}].pairs[${pIdx}].left = this.value" placeholder="Begrepp (vänster)" class="w-1/2 px-3 py-1.5 rounded-lg border border-slate-300 text-xs">
                             <span class="text-slate-400 font-bold">↔</span>
-                            <input type="text" value="${p.right || ''}" onchange="state.editingExam.questions[${idx}].pairs[${pIdx}].right = this.value" placeholder="Förklaring/Koppling" class="w-1/2 px-3 py-1.5 rounded-lg border border-slate-300 text-xs">
-                            <button type="button" onclick="removeMatchingPair(${idx},${pIdx})" class="text-red-500 text-xs px-1"><i class="fa-solid fa-xmark"></i></button>
+                            <input type="text" value="${p.right || ''}" onchange="state.editingExam.questions[${idx}].pairs[${pIdx}].right = this.value" placeholder="Rätt koppling / facit (höger)" class="w-1/2 px-3 py-1.5 rounded-lg border border-slate-300 text-xs">
+                            <button type="button" onclick="removeMatchingPair(${idx},${pIdx})" class="text-red-500 text-xs px-1 hover:text-red-700"><i class="fa-solid fa-xmark"></i></button>
                         </div>
                     `).join('')}
-                    <button type="button" onclick="addMatchingPair(${idx})" class="px-2.5 py-1 bg-purple-100 text-purple-700 font-bold text-xs rounded-lg mt-1">+ Lägg till ett par</button>
+                    <button type="button" onclick="addMatchingPair(${idx})" class="px-2.5 py-1 bg-purple-100 text-purple-700 font-bold text-xs rounded-lg mt-1 hover:bg-purple-200">+ Lägg till ett begreppspar</button>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-bold text-slate-700 uppercase mb-1">4. Bedömningsnivå att utgå ifrån <span class="text-emerald-700 font-semibold">(Styr AI & pluppar: t.ex. Ljusgrön vs Mörkgrön)</span></label>
+                    <input type="text" value="${q.criteria || ''}" onchange="state.editingExam.questions[${idx}].criteria = this.value" placeholder="t.ex. Ljusgrön: minst 2 rätta kopplingar. Mörkgrön: alla kopplingar korrekta." class="w-full px-3 py-2 rounded-lg border border-emerald-300 bg-emerald-50/40 text-sm">
                 </div>
             </div>
         `;
@@ -1687,65 +1730,100 @@ function renderEditQuestionCard(q, idx, totalQuestions, isTicket) {
 
     if (qType === 'mcq') {
         return `
-            <div class="p-4 rounded-xl border border-blue-200 bg-blue-50/40 space-y-3">
-                <div class="flex items-center justify-between">
-                    <span class="font-bold text-xs text-blue-700 uppercase">Fråga ${idx + 1}: Välj rätt (Flerval)</span>
+            <div class="p-5 rounded-2xl border-2 border-blue-200 bg-blue-50/30 space-y-4">
+                <div class="flex items-center justify-between border-b border-blue-200/60 pb-2">
+                    <span class="font-black text-xs text-blue-800 uppercase tracking-wider">Uppgift ${idx + 1}: Välj rätt (Flerval)</span>
                     <div class="flex items-center space-x-1">
                         ${idx > 0 ? `<button type="button" onclick="moveQuestion(${idx}, -1)" title="Flytta upp" class="p-1 px-2 bg-slate-200 hover:bg-slate-300 rounded text-xs">▲</button>` : ''}
                         ${idx < totalQuestions - 1 ? `<button type="button" onclick="moveQuestion(${idx}, 1)" title="Flytta ner" class="p-1 px-2 bg-slate-200 hover:bg-slate-300 rounded text-xs">▼</button>` : ''}
-                        <button type="button" onclick="removeQuestion(${idx})" class="text-red-500 text-xs ml-2"><i class="fa-solid fa-trash"></i></button>
+                        <button type="button" onclick="removeQuestion(${idx})" class="text-red-500 text-xs ml-2 hover:text-red-700"><i class="fa-solid fa-trash"></i></button>
                     </div>
                 </div>
-                <input type="text" value="${q.text || ''}" onchange="state.editingExam.questions[${idx}].text = this.value" placeholder="Fråga..." class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm font-semibold">
-                
-                <div class="space-y-2 pt-1">
-                    <span class="text-xs font-bold text-slate-500 block">Svarsalternativ (Kryssa i de som är RÄTT):</span>
+
+                <div>
+                    <label class="block text-xs font-bold text-slate-700 uppercase mb-1">1. Själva Frågan <span class="text-red-600 font-semibold">(Syns för eleven)</span></label>
+                    <input type="text" value="${q.text || ''}" onchange="state.editingExam.questions[${idx}].text = this.value" placeholder="t.ex. Vilka av följande orsaker ledde till revolutionen?" class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm font-semibold">
+                </div>
+
+                <div>
+                    <label class="block text-xs font-bold text-slate-700 uppercase mb-1">2. Förtydligande av frågan <span class="text-red-600 font-semibold">(Syns för eleven)</span></label>
+                    <input type="text" value="${q.clarification || ''}" onchange="state.editingExam.questions[${idx}].clarification = this.value" placeholder="t.ex. Tänk på vad vi diskuterade om ståndssamhället och skatterna..." class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm">
+                </div>
+
+                <div class="bg-white p-3.5 rounded-xl border border-blue-200 space-y-2">
+                    <label class="block text-xs font-bold text-blue-900 uppercase">3. Svarsalternativ & Facit <span class="text-blue-600 font-semibold">(Kryssa i de som är RÄTT - facit)</span></label>
                     ${(q.options || []).map((opt, oIdx) => {
                         const isCorrect = (q.correctOptions || []).includes(opt);
                         return `
                             <div class="flex items-center gap-2">
                                 <input type="checkbox" ${isCorrect ? 'checked' : ''} onchange="toggleMcqCorrect(${idx},${oIdx}, this.checked)" class="w-4 h-4 text-emerald-600 rounded">
                                 <input type="text" value="${opt}" onchange="updateMcqOptionText(${idx}, ${oIdx}, this.value)" placeholder="Svarsalternativ ${oIdx + 1}..." class="flex-1 px-3 py-1.5 rounded-lg border border-slate-300 text-xs">
-                                <button type="button" onclick="removeMcqOption(${idx},${oIdx})" class="text-red-500 text-xs px-1"><i class="fa-solid fa-xmark"></i></button>
+                                <button type="button" onclick="removeMcqOption(${idx},${oIdx})" class="text-red-500 text-xs px-1 hover:text-red-700"><i class="fa-solid fa-xmark"></i></button>
                             </div>
                         `;
                     }).join('')}
-                    <button type="button" onclick="addMcqOption(${idx})" class="px-2.5 py-1 bg-blue-100 text-blue-700 font-bold text-xs rounded-lg mt-1">+ Lägg till alternativ</button>
+                    <button type="button" onclick="addMcqOption(${idx})" class="px-2.5 py-1 bg-blue-100 text-blue-700 font-bold text-xs rounded-lg mt-1 hover:bg-blue-200">+ Lägg till alternativ</button>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-bold text-slate-700 uppercase mb-1">4. Bedömningsnivå att utgå ifrån <span class="text-emerald-700 font-semibold">(Styr AI & pluppar)</span></label>
+                    <input type="text" value="${q.criteria || ''}" onchange="state.editingExam.questions[${idx}].criteria = this.value" placeholder="t.ex. Ljusgrön: 1 rätt alternativ valt. Mörkgrön: båda korrekta alternativen valda utan felval." class="w-full px-3 py-2 rounded-lg border border-emerald-300 bg-emerald-50/40 text-sm">
                 </div>
             </div>
         `;
     }
 
-    if (isTicket) {
-        return `
-            <div class="p-4 rounded-xl border border-slate-200 bg-slate-50 space-y-3">
-                <div class="flex items-center justify-between">
-                    <span class="font-bold text-xs text-red-600">Begrepp ${idx + 1}</span>
-                    <div class="flex items-center space-x-1">
-                        ${idx > 0 ? `<button type="button" onclick="moveQuestion(${idx}, -1)" title="Flytta upp" class="p-1 px-2 bg-slate-200 hover:bg-slate-300 rounded text-xs">▲</button>` : ''}
-                        ${idx < totalQuestions - 1 ? `<button type="button" onclick="moveQuestion(${idx}, 1)" title="Flytta ner" class="p-1 px-2 bg-slate-200 hover:bg-slate-300 rounded text-xs">▼</button>` : ''}
-                        <button type="button" onclick="removeQuestion(${idx})" class="text-red-500 text-xs ml-2"><i class="fa-solid fa-trash"></i></button>
-                    </div>
-                </div>
-                <input type="text" value="${q.text || ''}" onchange="state.editingExam.questions[${idx}].text = this.value" placeholder="Rad 1: Begrepp..." class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm">
-                <input type="text" value="${q.explanation || ''}" onchange="state.editingExam.questions[${idx}].explanation = this.value" placeholder="Rad 2: Förklaring/Svar för begreppet..." class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm">
-            </div>
-        `;
-    }
-
+    // Standard Fråga & Begrepp (Text/Resonemang)
     return `
-        <div class="p-4 rounded-xl border border-slate-200 bg-slate-50 space-y-3">
-            <div class="flex items-center justify-between">
-                <span class="font-bold text-xs text-red-600">Fråga ${idx + 1}</span>
+        <div class="p-5 rounded-2xl border-2 border-slate-200 bg-slate-50/80 space-y-4 shadow-sm">
+            <div class="flex items-center justify-between border-b border-slate-200 pb-2">
+                <span class="font-black text-xs text-red-600 uppercase tracking-wider">${isTicket ? 'Begrepp / Fråga ' + (idx + 1) : 'Fråga ' + (idx + 1)}</span>
                 <div class="flex items-center space-x-1">
                     ${idx > 0 ? `<button type="button" onclick="moveQuestion(${idx}, -1)" title="Flytta upp" class="p-1 px-2 bg-slate-200 hover:bg-slate-300 rounded text-xs">▲</button>` : ''}
                     ${idx < totalQuestions - 1 ? `<button type="button" onclick="moveQuestion(${idx}, 1)" title="Flytta ner" class="p-1 px-2 bg-slate-200 hover:bg-slate-300 rounded text-xs">▼</button>` : ''}
-                    <button type="button" onclick="removeQuestion(${idx})" class="text-red-500 text-xs ml-2"><i class="fa-solid fa-trash"></i></button>
+                    <button type="button" onclick="removeQuestion(${idx})" class="text-red-500 text-xs ml-2 hover:text-red-700"><i class="fa-solid fa-trash"></i></button>
                 </div>
             </div>
-            <input type="text" value="${q.text || ''}" onchange="state.editingExam.questions[${idx}].text = this.value" placeholder="Rad 1: Frågan..." class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm">
-            <input type="text" value="${q.explanation || ''}" onchange="state.editingExam.questions[${idx}].explanation = this.value" placeholder="Rad 2: Exempel på modellsvar..." class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm">
-            <input type="text" value="${q.criteria || ''}" onchange="state.editingExam.questions[${idx}].criteria = this.value" placeholder="Rad 3: Krav..." class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm bg-white text-slate-800">
+
+            <!-- FÄLT 1: FRÅGAN -->
+            <div>
+                <label class="block text-xs font-bold text-slate-800 uppercase mb-1">
+                    1. Själva frågan / Begreppet <span class="text-red-600 font-semibold">(Syns för eleven)</span>
+                </label>
+                <input type="text" value="${q.text || ''}" onchange="state.editingExam.questions[${idx}].text = this.value" 
+                    placeholder="${isTicket ? 't.ex. Urbanisering' : 't.ex. Varför startade Franska Revolutionen?'}" 
+                    class="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm font-semibold bg-white">
+            </div>
+
+            <!-- FÄLT 2: FÖRTYDLIGANDE -->
+            <div>
+                <label class="block text-xs font-bold text-slate-800 uppercase mb-1">
+                    2. Förtydligande av frågan <span class="text-red-600 font-semibold">(Syns för eleven som hjälp/instruktion)</span>
+                </label>
+                <input type="text" value="${q.clarification || ''}" onchange="state.editingExam.questions[${idx}].clarification = this.value" 
+                    placeholder="${isTicket ? 't.ex. Beskriv med egna ord vad som händer när människor flyttar...' : 't.ex. Ge gärna både orsaker som handlar om pengar och orättvisor...'}" 
+                    class="w-full px-3.5 py-2 rounded-xl border border-slate-300 text-sm bg-white">
+            </div>
+
+            <!-- FÄLT 3: FACIT / SVARET DU VILL HA -->
+            <div>
+                <label class="block text-xs font-bold text-purple-900 uppercase mb-1">
+                    3. Svaret du vill ha / Förslag på svar <span class="text-purple-600 font-semibold">(Dolt för eleven - facit för bedömning)</span>
+                </label>
+                <textarea rows="2" onchange="state.editingExam.questions[${idx}].modelAnswer = this.value; state.editingExam.questions[${idx}].explanation = this.value;" 
+                    placeholder="${isTicket ? 't.ex. Inflyttning från landsbygd till städer till följd av industrialiseringen...' : 't.ex. Statens tomma kassa pga krig, missväxt som gav svält, adelns skattefrihet och det tredje ståndets missnöje...'}" 
+                    class="w-full px-3.5 py-2 rounded-xl border border-purple-300 bg-purple-50/30 text-sm text-slate-800 outline-none">${q.modelAnswer || q.explanation || ''}</textarea>
+            </div>
+
+            <!-- FÄLT 4: BEDÖMNINGSNIVÅER -->
+            <div>
+                <label class="block text-xs font-bold text-emerald-800 uppercase mb-1">
+                    4. Bedömningsnivå att utgå ifrån <span class="text-emerald-700 font-semibold">(Styr responsen & plupparna)</span>
+                </label>
+                <input type="text" value="${q.criteria || ''}" onchange="state.editingExam.questions[${idx}].criteria = this.value" 
+                    placeholder="t.ex. För ljusgrön plupp räcker ett exempel, för mörkgrön behövs tre exempel." 
+                    class="w-full px-3.5 py-2.5 rounded-xl border border-emerald-300 bg-emerald-50/50 text-sm text-slate-800 font-medium">
+            </div>
         </div>
     `;
 }
@@ -1765,7 +1843,15 @@ function moveQuestion(idx, direction) {
 function addTextQuestion() {
     syncFormToState();
     if (!state.editingExam.questions) state.editingExam.questions = [];
-    state.editingExam.questions.push({ id: Date.now(), type: 'text', text: '', explanation: '', criteria: '' });
+    state.editingExam.questions.push({ 
+        id: Date.now(), 
+        type: 'text', 
+        text: '', 
+        clarification: '', 
+        modelAnswer: '', 
+        explanation: '', 
+        criteria: '' 
+    });
     render();
 }
 
@@ -1776,6 +1862,8 @@ function addMatchingQuestion() {
         id: Date.now(),
         type: 'matching',
         text: 'Koppla samman rätt begrepp med rätt förklaring',
+        clarification: '',
+        criteria: 'Ljusgrön för delvis rätt, mörkgrön för alla rätt.',
         pairs: [
             { left: '', right: '' },
             { left: '', right: '' }
@@ -1804,6 +1892,8 @@ function addMcqQuestion() {
         id: Date.now(),
         type: 'mcq',
         text: '',
+        clarification: '',
+        criteria: 'Mörkgrön vid alla rätta val utan felval, annars ljusgrön eller röd.',
         options: ['', ''],
         correctOptions: []
     });
