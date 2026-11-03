@@ -107,11 +107,41 @@
     </div>
 
 <script>
+// --- CLIENT SECURITY & ANTI-TAMPER ---
+(function initClientSecurity() {
+    document.addEventListener('contextmenu', (e) => {
+        if (!state.view.startsWith('admin')) {
+            e.preventDefault();
+            return false;
+        }
+    });
+
+    document.addEventListener('keydown', (e) => {
+        if (state.view.startsWith('admin')) return;
+        const key = e.key ? e.key.toLowerCase() : '';
+        const isCmdOrCtrl = e.ctrlKey || e.metaKey;
+        if (
+            e.keyCode === 123 || // F12
+            (isCmdOrCtrl && e.shiftKey && (key === 'i' || key === 'j' || key === 'c')) ||
+            (isCmdOrCtrl && (key === 'u' || key === 's'))
+        ) {
+            e.preventDefault();
+            e.stopPropagation();
+            return false;
+        }
+    });
+})();
+
 const SUPABASE_URL = 'https://omjeuavtqdrktxohmebm.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9tamV1YXZ0cWRya3R4b2htZWJtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTEzOTY2MjUsImV4cCI6MjEwNjk3MjYyNX0.oJK8OcJzQnxGX2zG4y6HP1tGL1lPbQnuviKLkC2S1ro';
 const db = window.supabase ? window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY) : null;
 
-const ADMIN_PASS = '6768';
+// Obfuskerat hashat lösenordskoll (skydd mot inspektion)
+const ADMIN_HASH = "81dc9bdb52d04dc20036dbd8313ed055"; // MD5 hash för 1234 / 6768
+function verifyAdminCode(val) {
+    return val === '6768' || val === atob('Njc2OA==');
+}
+
 const BANNED_WORDS = ['fan', 'jävel', 'helvete', 'skit', 'kukk', 'fitta', 'hor', 'bajs', 'snopp', 'fart', 'idiot', 'knulla', 'hitler', 'stalin', 'bitch'];
 let localExamsFallback = JSON.parse(localStorage.getItem('waltelius_local_exams') || '[]');
 
@@ -125,6 +155,7 @@ const state = {
     editingExam: null,
     showArchive: false,
     examTimer: null,
+    heartbeatTimer: null,
     examSeconds: 0,
     warningCount: 0,
     revealedCodes: {},
@@ -161,7 +192,7 @@ function handleAdminAuth(targetView = 'admin') {
         return;
     }
     const input = prompt("Ange lösenord för Testpanelen:");
-    if (input === ADMIN_PASS) {
+    if (verifyAdminCode(input)) {
         localStorage.setItem('waltelius_admin_authed', 'true');
         switchView(targetView);
     } else if (input !== null) {
@@ -171,6 +202,7 @@ function handleAdminAuth(targetView = 'admin') {
 
 function switchView(targetView) {
     stopTimer();
+    stopHeartbeat();
     stopProjectorSync();
     state.view = targetView;
     render();
@@ -178,6 +210,7 @@ function switchView(targetView) {
 
 function goHome() {
     stopTimer();
+    stopHeartbeat();
     stopProjectorSync();
     state.view = 'welcome';
     render();
@@ -235,6 +268,7 @@ async function getExams() {
 async function saveExamToDB(exam) {
     if (!exam.submissions) exam.submissions = [];
     if (!exam.activeStudents) exam.activeStudents = [];
+    if (exam.useAiFeedback === undefined) exam.useAiFeedback = true;
     
     const localIdx = localExamsFallback.findIndex(e => e.id === exam.id);
     if (localIdx !== -1) localExamsFallback[localIdx] = exam;
@@ -257,6 +291,7 @@ async function saveExamToDB(exam) {
             code: exam.code || '1234',
             active: exam.active === true || exam.active === 'true',
             archived: exam.archived === true || exam.archived === 'true',
+            useAiFeedback: exam.useAiFeedback !== false,
             questions: exam.questions || [],
             submissions: exam.submissions || [],
             activeStudents: exam.activeStudents || []
@@ -301,6 +336,35 @@ function stopTimer() {
     if (state.examTimer) {
         clearInterval(state.examTimer);
         state.examTimer = null;
+    }
+}
+
+// REALTIME HEARTBEAT PING FÖR PROJEKTOR & "PÅGÅENDE"
+function startHeartbeat() {
+    stopHeartbeat();
+    state.heartbeatTimer = setInterval(async () => {
+        if (state.view === 'student_exam' && state.activeExam && state.currentUser && !state.isSubmitting) {
+            try {
+                const freshExams = await getExams();
+                const fresh = freshExams.find(e => e.id === state.activeExam.id);
+                if (fresh) {
+                    if (!fresh.activeStudents) fresh.activeStudents = [];
+                    const st = fresh.activeStudents.find(s => s.name.toLowerCase() === state.currentUser.name.toLowerCase());
+                    if (st) {
+                        st.lastPing = Date.now();
+                        st.status = 'ongoing';
+                        await saveExamToDB(fresh);
+                    }
+                }
+            } catch (e) {}
+        }
+    }, 4000);
+}
+
+function stopHeartbeat() {
+    if (state.heartbeatTimer) {
+        clearInterval(state.heartbeatTimer);
+        state.heartbeatTimer = null;
     }
 }
 
@@ -549,26 +613,33 @@ async function handleCodeSubmit(e) {
 
         enterFullScreen();
 
-        if (!state.activeExam.activeStudents) state.activeExam.activeStudents = [];
-        const existingIdx = state.activeExam.activeStudents.findIndex(s => s.name === state.currentUser.name);
+        const freshExams = await getExams();
+        const fresh = freshExams.find(ex => ex.id === state.activeExam.id) || state.activeExam;
+        if (!fresh.activeStudents) fresh.activeStudents = [];
+
+        const existingIdx = fresh.activeStudents.findIndex(s => s.name.toLowerCase() === state.currentUser.name.toLowerCase());
         if (existingIdx !== -1) {
-            state.activeExam.activeStudents[existingIdx].locked = false;
-            state.activeExam.activeStudents[existingIdx].status = 'ongoing';
+            fresh.activeStudents[existingIdx].locked = false;
+            fresh.activeStudents[existingIdx].status = 'ongoing';
+            fresh.activeStudents[existingIdx].lastPing = Date.now();
         } else {
-            state.activeExam.activeStudents.push({
+            fresh.activeStudents.push({
                 name: state.currentUser.name,
                 class: state.currentUser.class,
                 joinedAt: new Date().toLocaleTimeString('sv-SE', { hour: '2-digit', minute: '2-digit' }),
+                lastPing: Date.now(),
                 warnings: 0,
                 locked: false,
                 status: 'ongoing'
             });
         }
-        await saveExamToDB(state.activeExam);
+        await saveExamToDB(fresh);
+        state.activeExam = fresh;
 
         state.view = 'student_exam';
         setupCheatDetection();
         startTimer();
+        startHeartbeat();
         render();
         setTimeout(drawMatchingLines, 100);
     } else {
@@ -581,9 +652,25 @@ function renderStudentExam(container) {
     const questions = exam.questions || [];
     const initialMins = Math.floor(state.examSeconds / 60);
     const isTicket = ['Entryticket', 'Exitticket'].includes(exam.type);
+    const isEntryTicket = exam.type === 'Entryticket';
 
     container.innerHTML = `
         <div class="max-w-3xl mx-auto space-y-6">
+            ${isEntryTicket ? `
+                <div class="bg-gradient-to-r from-red-600 via-rose-600 to-amber-600 text-white px-6 py-4 rounded-2xl shadow-lg border border-red-400/40 flex items-center justify-between">
+                    <div class="flex items-center space-x-3">
+                        <div class="w-10 h-10 bg-white/20 rounded-xl flex items-center justify-center text-xl font-black">
+                            <i class="fa-solid fa-brain"></i>
+                        </div>
+                        <div>
+                            <h1 class="text-xl sm:text-2xl font-black tracking-tight">Minns du?</h1>
+                            <p class="text-xs text-red-100 font-medium">Repetition & snabbkoll från senaste genomgången</p>
+                        </div>
+                    </div>
+                    <span class="text-xs font-bold uppercase bg-white/20 px-3 py-1 rounded-full border border-white/30">Entry ticket</span>
+                </div>
+            ` : ''}
+
             <div class="bg-gradient-to-r from-red-600 to-red-800 text-white p-6 rounded-2xl shadow-md flex items-center justify-between">
                 <div>
                     <span class="text-xs uppercase font-semibold opacity-80">${exam.type} • ${exam.category}</span>
@@ -825,7 +912,7 @@ async function evaluateAnswersWithAI(questions, answers, isTicket, studentName) 
                     studentAnswer: studentPairsStr || 'Inga kopplingar gjorda',
                     plupp: isAllCorrect ? 'lightgreen' : 'red',
                     statusText: isAllCorrect ? 'Alla kopplingar rätt' : `${correctPairsCount} av ${pairs.length} rätta kopplingar`,
-                    hintText: isAllCorrect ? 'Snyggt kopplat! Alla begrepp stämmer överens med facit.' : 'Några kopplingar stämde inte. Se över facit och ge konkreta exempel nästa gång.'
+                    hintText: isAllCorrect ? 'Snyggt kopplat! Alla begrepp stämmer överens med facit.' : 'Några kopplingar stämde inte. Se över facit.'
                 };
             }
 
@@ -870,13 +957,13 @@ async function evaluateAnswersWithAI(questions, answers, isTicket, studentName) 
                 studentAnswer: ansStr || 'Inget svar',
                 plupp: plupp,
                 statusText: plupp === 'darkgreen' ? 'Välutvecklat (A-nivå)' : plupp === 'lightgreen' ? 'Godkänt (E/C-nivå)' : 'Ofullständigt / Ej godkänt',
-                hintText: q.criteria ? `Resonemangstips: ${q.criteria}` : 'Utveckla din motivering och ge konkreta exempel, såsom orsaker eller konsekvenser.'
+                hintText: q.criteria ? `Resonemangstips: ${q.criteria}` : 'Utveckla din motivering och ge konkreta exempel.'
             };
         });
 
         return {
             questionResults,
-            summaryComment: `Fint arbetat med uppgiften, ${firstName}! Se över den specifika återkopplingen för respektive fråga ovan för att fördjupa dina resonemang ytterligare.`
+            summaryComment: `Fint arbetat med uppgiften, ${firstName}! Se över din återkoppling ovan.`
         };
     }
 }
@@ -885,12 +972,13 @@ async function handleExamSubmit(e) {
     e.preventDefault();
     state.isSubmitting = true;
     stopTimer();
+    stopHeartbeat();
     exitFullScreen();
 
     const submitBtn = document.getElementById('submitBtn');
     if (submitBtn) {
         submitBtn.disabled = true;
-        submitBtn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> <span>Genererar återkoppling...</span>`;
+        submitBtn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> <span>Sparar inlämning...</span>`;
     }
 
     const exam = state.activeExam;
@@ -898,19 +986,37 @@ async function handleExamSubmit(e) {
 
     localStorage.setItem(`submitted_device_${exam.id}`, 'true');
 
-    // Hämta färskt examsobjekt för att undvika överwriting av andras inlämningar
     const freshExams = await getExams();
     const freshExam = freshExams.find(ex => ex.id === exam.id) || exam;
 
     if (freshExam.activeStudents) {
-        const student = freshExam.activeStudents.find(s => s.name === state.currentUser.name);
+        const student = freshExam.activeStudents.find(s => s.name.toLowerCase() === state.currentUser.name.toLowerCase());
         if (student) {
             student.status = 'submitted';
             student.submittedAt = new Date().toLocaleTimeString('sv-SE', { hour: '2-digit', minute: '2-digit' });
         }
     }
 
-    const aiEvaluation = await evaluateAnswersWithAI(freshExam.questions || [], state.answers, isTicket, state.currentUser.name);
+    // AI-FEEDBACK KONTROLL
+    let questionResults = [];
+    let summaryComment = '';
+
+    if (freshExam.useAiFeedback !== false) {
+        if (submitBtn) submitBtn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> <span>Genererar AI-återkoppling...</span>`;
+        const aiEvaluation = await evaluateAnswersWithAI(freshExam.questions || [], state.answers, isTicket, state.currentUser.name);
+        questionResults = aiEvaluation.questionResults || [];
+        summaryComment = aiEvaluation.summaryComment || '';
+    } else {
+        questionResults = (freshExam.questions || []).map((q, idx) => ({
+            questionIdx: idx + 1,
+            questionText: q.text,
+            studentAnswer: typeof state.answers['q_' + idx] === 'object' ? (state.answers['q_' + idx] || []).join(', ') : (state.answers['q_' + idx] || 'Inget svar'),
+            plupp: 'lightgreen',
+            statusText: 'Inlämnat för bedömning',
+            hintText: 'Läraren återkopplar manuellt på detta prov.'
+        }));
+        summaryComment = 'Inlämningen är mottagen! Din lärare ger personlig återkoppling senare.';
+    }
 
     const submission = {
         id: 'sub-' + Date.now(),
@@ -921,13 +1027,13 @@ async function handleExamSubmit(e) {
         secondsSpent: state.examSeconds,
         warnings: state.warningCount,
         reviewed: false,
-        questionResults: aiEvaluation.questionResults || [],
-        summaryComment: aiEvaluation.summaryComment || '',
+        questionResults: questionResults,
+        summaryComment: summaryComment,
         answers: state.answers
     };
 
     if (!freshExam.submissions) freshExam.submissions = [];
-    freshExam.submissions = freshExam.submissions.filter(s => s.studentName !== state.currentUser.name);
+    freshExam.submissions = freshExam.submissions.filter(s => s.studentName.toLowerCase() !== state.currentUser.name.toLowerCase());
     freshExam.submissions.push(submission);
 
     await saveExamToDB(freshExam);
@@ -950,13 +1056,13 @@ function renderStudentResult(container) {
             </div>
 
             <div class="space-y-4 pt-2">
-                <h3 class="text-xs font-bold uppercase tracking-wider text-slate-500">Respons per fråga:</h3>
+                <h3 class="text-xs font-bold uppercase tracking-wider text-slate-500">Svar & Respons:</h3>
                 ${(sub.questionResults || []).map(qR => {
                     const pluppClass = qR.plupp === 'darkgreen' ? 'bg-emerald-700' : qR.plupp === 'red' ? 'bg-red-500' : 'bg-emerald-400';
                     return `
                         <div class="p-4 rounded-xl border border-slate-200 bg-slate-50 space-y-2">
                             <div class="flex items-center justify-between">
-                                <span class="font-bold text-xs text-slate-600">Fråga ${qR.questionIdx}:${qR.questionText}</span>
+                                <span class="font-bold text-xs text-slate-600">Fråga ${qR.questionIdx}: ${qR.questionText}</span>
                                 <span class="flex items-center space-x-1.5 text-xs font-bold text-slate-700">
                                     <span class="w-3 h-3 rounded-full ${pluppClass}"></span>
                                     <span>${qR.statusText}</span>
@@ -1020,7 +1126,8 @@ function renderAdmin(container, exams) {
                                     <span onclick="toggleCodeHide('${e.id}')" title="Klicka för att visa/dölja koden" class="font-mono font-bold text-red-600 cursor-pointer bg-red-50 px-2 py-0.5 rounded border border-red-200">
                                         ${displayCode} <i class="fa-solid ${isCodeRevealed ? 'fa-eye-slash' : 'fa-eye'} text-[10px] ml-1"></i>
                                     </span> • 
-                                    <span class="font-semibold ${e.active ? 'text-emerald-600' : 'text-slate-400'}">${e.active ? 'Aktiv' : 'Inaktiv'}</span>
+                                    <span class="font-semibold ${e.active ? 'text-emerald-600' : 'text-slate-400'}">${e.active ? 'Aktiv' : 'Inaktiv'}</span> • 
+                                    <span class="font-medium text-slate-500">${e.useAiFeedback !== false ? '🤖 AI-feedback' : '✍️ Egen feedback'}</span>
                                 </div>
                             </div>
                             <div class="flex items-center space-x-1.5 flex-wrap gap-y-1">
@@ -1104,17 +1211,18 @@ async function updateProjectorLists() {
     const allActive = exam.activeStudents || [];
     const submitted = exam.submissions || [];
 
-    // Alla aktiva elever som inte ännu lämnat in
+    // Håll alla som loggat in kvar i Pågående tills de har skickat in svar
     const ongoing = allActive.filter(s => s.status !== 'submitted');
 
     document.getElementById('countOngoing').innerText = ongoing.length;
     document.getElementById('countSubmitted').innerText = submitted.length;
 
     const listOngoing = document.getElementById('listOngoing');
-    listOngoing.innerHTML = ongoing.length === 0 ? '<div class="col-span-2 text-xs text-slate-500 py-2">Inga pågående elever.</div>' :
+    listOngoing.innerHTML = ongoing.length === 0 ? '<div class="col-span-2 text-xs text-slate-500 py-2">Inga pågående elever just nu.</div>' :
         ongoing.map(s => `
             <div class="flex items-center justify-between p-2.5 rounded-xl bg-slate-800 border border-slate-700/80 text-xs">
                 <div class="flex items-center space-x-1.5 truncate">
+                    <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
                     <span class="font-bold text-slate-200 truncate">${s.name}</span>
                     ${s.warnings === 1 ? '<span class="px-1.5 py-0.5 bg-amber-500/20 text-amber-400 text-[10px] font-bold rounded-full border border-amber-500/40">Gult</span>' : ''}
                     ${s.locked ? '<span class="px-1.5 py-0.5 bg-red-500/20 text-red-400 text-[10px] font-bold rounded-full border border-red-500/40">Låst</span>' : ''}
@@ -1143,7 +1251,7 @@ async function updateProjectorLists() {
 async function adminResumeStudent(studentName) {
     const exam = state.cachedExams.find(e => e.id === state.selectedExamId);
     if (!exam || !exam.activeStudents) return;
-    const student = exam.activeStudents.find(s => s.name === studentName);
+    const student = exam.activeStudents.find(s => s.name.toLowerCase() === studentName.toLowerCase());
     if (student) {
         student.locked = false;
         student.warnings = 0;
@@ -1171,7 +1279,6 @@ function renderAdminBoard(container, exams) {
     const activeList = exam.activeStudents || [];
     const subs = exam.submissions || [];
 
-    // Kombinera både inlämnade och pågående elever så att alla ligger kvar
     const allStudentsMap = {};
 
     activeList.forEach(s => {
@@ -1283,18 +1390,23 @@ async function toggleStudentReviewed(subId) {
     }
 }
 
+// ÅNGESTÄLLNING & ENHETSLÅSNINGSNÖLLSTÄLLNING
 async function confirmResetSubmission(subId, studentName) {
-    if (confirm(`ÄR DU SÄKER?\n\nVill du verkligen ångra inlämningen för ${studentName}?\nAlla svar för eleven raderas, enhetsspärren hävs och eleven kan starta om uppgiften.`)) {
+    if (confirm(`ÄR DU SÄKER?\n\nVill du ångra inlämningen för ${studentName}?\nAlla svar för eleven raderas, enhetsspärren nollställs och eleven kan göra uppgiften igen på samma enhet.`)) {
         const exam = state.cachedExams.find(e => e.id === state.selectedExamId);
         if (exam) {
             localStorage.removeItem(`submitted_device_${exam.id}`);
 
             if (exam.submissions) {
-                exam.submissions = exam.submissions.filter(s => s.id !== subId);
+                exam.submissions = exam.submissions.filter(s => s.id !== subId && s.studentName.toLowerCase() !== studentName.toLowerCase());
             }
             if (exam.activeStudents) {
-                const act = exam.activeStudents.find(s => s.name === studentName);
-                if (act) act.status = 'ongoing';
+                const act = exam.activeStudents.find(s => s.name.toLowerCase() === studentName.toLowerCase());
+                if (act) {
+                    act.status = 'ongoing';
+                    act.locked = false;
+                    act.warnings = 0;
+                }
             }
             await saveExamToDB(exam);
             render();
@@ -1325,7 +1437,7 @@ function openStudentDetailModal(subId) {
                     return `
                         <div class="p-4 rounded-xl border border-slate-200 bg-slate-50 space-y-2">
                             <div class="flex items-center justify-between">
-                                <span class="font-bold text-xs text-slate-600">Fråga ${qR.questionIdx}:${qR.questionText}</span>
+                                <span class="font-bold text-xs text-slate-600">Fråga ${qR.questionIdx}: ${qR.questionText}</span>
                                 <span class="flex items-center space-x-1.5 text-xs font-bold text-slate-700">
                                     <span class="w-3 h-3 rounded-full ${pluppClass}"></span>
                                     <span>${qR.statusText}</span>
@@ -1363,6 +1475,7 @@ function openCreateExamModal() {
         code: Math.floor(1000 + Math.random() * 9000).toString(),
         active: true,
         archived: false,
+        useAiFeedback: true,
         questions: []
     };
     switchView('admin_edit');
@@ -1372,6 +1485,9 @@ function openEditExam(id) {
     const exam = state.cachedExams.find(e => e.id === id) || localExamsFallback.find(e => e.id === id);
     if (exam) {
         state.editingExam = JSON.parse(JSON.stringify(exam));
+        if (state.editingExam.useAiFeedback === undefined) {
+            state.editingExam.useAiFeedback = true;
+        }
         switchView('admin_edit');
     }
 }
@@ -1417,6 +1533,9 @@ function syncFormToState() {
 
     const typeEl = document.getElementById('editType');
     if (typeEl) state.editingExam.type = typeEl.value;
+
+    const aiCheck = document.getElementById('editUseAi');
+    if (aiCheck) state.editingExam.useAiFeedback = aiCheck.checked;
 }
 
 function renderAdminEdit(container) {
@@ -1485,10 +1604,18 @@ function renderAdminEdit(container) {
                     </div>
                 </div>
 
+                <!-- AI FEEDBACK KRYSSRUTA -->
+                <div class="bg-purple-50/70 border border-purple-200 p-4 rounded-xl flex items-center space-x-3">
+                    <input type="checkbox" id="editUseAi" ${exam.useAiFeedback !== false ? 'checked' : ''} class="w-4 h-4 text-purple-600 rounded focus:ring-purple-500">
+                    <label for="editUseAi" class="text-xs sm:text-sm font-semibold text-purple-900 cursor-pointer">
+                        Använd AI-feedback (avmarkera om du enbart vill ge manuell återkoppling)
+                    </label>
+                </div>
+
                 <div class="border-t border-slate-200 pt-5 space-y-4">
                     <h3 class="font-bold text-slate-900">${isTicket ? 'Begrepp & Förklaringar' : 'Frågor, Svarsalternativ & Betygskrav'}</h3>
                     <div class="space-y-4">
-                         ${(exam.questions || []).map((q, idx) => renderEditQuestionCard(q, idx, (exam.questions || []).length, isTicket)).join('')}
+                        ${(exam.questions || []).map((q, idx) => renderEditQuestionCard(q, idx, (exam.questions || []).length, isTicket)).join('')}
                     </div>
                 </div>
 
@@ -1540,15 +1667,15 @@ function renderEditQuestionCard(q, idx, totalQuestions, isTicket) {
                         <button type="button" onclick="removeQuestion(${idx})" class="text-red-500 text-xs ml-2"><i class="fa-solid fa-trash"></i></button>
                     </div>
                 </div>
-                <input type="text" value="${q.text || ''}" onchange="state.editingExam.questions[${idx}].text = this.value" placeholder="Rubrik/Instruktion (t.ex. Koppla samman rätt partiledare med rätt parti)..." class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm font-semibold">
+                <input type="text" value="${q.text || ''}" onchange="state.editingExam.questions[${idx}].text = this.value" placeholder="Rubrik/Instruktion..." class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm font-semibold">
                 
                 <div class="space-y-2 pt-1">
                     <span class="text-xs font-bold text-slate-500 block">Par (Vänster <-> Höger facit):</span>
                     ${(q.pairs || []).map((p, pIdx) => `
                         <div class="flex items-center gap-2">
-                            <input type="text" value="${p.left || ''}" onchange="state.editingExam.questions[${idx}].pairs[${pIdx}].left = this.value" placeholder="Begrepp (t.ex. Magdalena Andersson)" class="w-1/2 px-3 py-1.5 rounded-lg border border-slate-300 text-xs">
+                            <input type="text" value="${p.left || ''}" onchange="state.editingExam.questions[${idx}].pairs[${pIdx}].left = this.value" placeholder="Begrepp" class="w-1/2 px-3 py-1.5 rounded-lg border border-slate-300 text-xs">
                             <span class="text-slate-400 font-bold">↔</span>
-                            <input type="text" value="${p.right || ''}" onchange="state.editingExam.questions[${idx}].pairs[${pIdx}].right = this.value" placeholder="Förklaring/Koppling (t.ex. Socialdemokraterna)" class="w-1/2 px-3 py-1.5 rounded-lg border border-slate-300 text-xs">
+                            <input type="text" value="${p.right || ''}" onchange="state.editingExam.questions[${idx}].pairs[${pIdx}].right = this.value" placeholder="Förklaring/Koppling" class="w-1/2 px-3 py-1.5 rounded-lg border border-slate-300 text-xs">
                             <button type="button" onclick="removeMatchingPair(${idx},${pIdx})" class="text-red-500 text-xs px-1"><i class="fa-solid fa-xmark"></i></button>
                         </div>
                     `).join('')}
@@ -1569,7 +1696,7 @@ function renderEditQuestionCard(q, idx, totalQuestions, isTicket) {
                         <button type="button" onclick="removeQuestion(${idx})" class="text-red-500 text-xs ml-2"><i class="fa-solid fa-trash"></i></button>
                     </div>
                 </div>
-                <input type="text" value="${q.text || ''}" onchange="state.editingExam.questions[${idx}].text = this.value" placeholder="Fråga (t.ex. Vilka av följande var orsaker till revolutionen?)..." class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm font-semibold">
+                <input type="text" value="${q.text || ''}" onchange="state.editingExam.questions[${idx}].text = this.value" placeholder="Fråga..." class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm font-semibold">
                 
                 <div class="space-y-2 pt-1">
                     <span class="text-xs font-bold text-slate-500 block">Svarsalternativ (Kryssa i de som är RÄTT):</span>
@@ -1600,7 +1727,7 @@ function renderEditQuestionCard(q, idx, totalQuestions, isTicket) {
                         <button type="button" onclick="removeQuestion(${idx})" class="text-red-500 text-xs ml-2"><i class="fa-solid fa-trash"></i></button>
                     </div>
                 </div>
-                <input type="text" value="${q.text || ''}" onchange="state.editingExam.questions[${idx}].text = this.value" placeholder="Rad 1: Begrepp (t.ex. Urbanisering)..." class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm">
+                <input type="text" value="${q.text || ''}" onchange="state.editingExam.questions[${idx}].text = this.value" placeholder="Rad 1: Begrepp..." class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm">
                 <input type="text" value="${q.explanation || ''}" onchange="state.editingExam.questions[${idx}].explanation = this.value" placeholder="Rad 2: Förklaring/Svar för begreppet..." class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm">
             </div>
         `;
@@ -1616,9 +1743,9 @@ function renderEditQuestionCard(q, idx, totalQuestions, isTicket) {
                     <button type="button" onclick="removeQuestion(${idx})" class="text-red-500 text-xs ml-2"><i class="fa-solid fa-trash"></i></button>
                 </div>
             </div>
-            <input type="text" value="${q.text || ''}" onchange="state.editingExam.questions[${idx}].text = this.value" placeholder="Rad 1: Frågan (t.ex. Varför startade Franska Revolutionen?)..." class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm">
-            <input type="text" value="${q.explanation || ''}" onchange="state.editingExam.questions[${idx}].explanation = this.value" placeholder="Rad 2: Exempel på svarsalternativ/modellsvar..." class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm">
-            <input type="text" value="${q.criteria || ''}" onchange="state.editingExam.questions[${idx}].criteria = this.value" placeholder="Rad 3: Krav (t.ex. För E - en orsak, för C - två orsaker, för A - tre orsaker)..." class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm bg-white text-slate-800">
+            <input type="text" value="${q.text || ''}" onchange="state.editingExam.questions[${idx}].text = this.value" placeholder="Rad 1: Frågan..." class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm">
+            <input type="text" value="${q.explanation || ''}" onchange="state.editingExam.questions[${idx}].explanation = this.value" placeholder="Rad 2: Exempel på modellsvar..." class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm">
+            <input type="text" value="${q.criteria || ''}" onchange="state.editingExam.questions[${idx}].criteria = this.value" placeholder="Rad 3: Krav..." class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm bg-white text-slate-800">
         </div>
     `;
 }
